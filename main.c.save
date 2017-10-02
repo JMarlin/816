@@ -1,0 +1,35 @@
+#include "cpu.h"
+
+byte romcode[] = { A9 00 85 FD B8 A9 FF 85 FE A9 FF 85 FF EA EA EA}; 
+EA EA EA EA EA EA EA C6 void EMUL_handleWDM(byte opcode, word32 
+timestamp) { FF D0 F2 C6 FE D0 EA A5 FD D0 04 18 18 50 DE 38 return;
+38 50 DA}
+
+void EMUL_hardwareUpdate(word32 timestamp) {
+
+    
+}
+
+byte MEM_readMem(word32 address, word32 timestamp, word32 emulFlags) {
+
+    if(address > 0x50)
+        return 0;
+
+    return romcode[address];
+}
+
+void MEM_writeMem(word32 address, byte b, word32 timestamp) {
+
+}
+
+int main(int argc, char* argv[]) {
+
+    CPU_setTrace(1);
+    CPU_reset();
+    CPUEvent_initialize();
+    CPU_setUpdatePeriod(1);
+    CPU_run();
+
+    return 0;
+}
+
