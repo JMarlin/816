@@ -132,7 +132,7 @@ ENDFL LDX #$00
       LDA incoming_ch ;Add the char we were sent to the output buffer if nonzero
       BEQ SKPAD
       JSR @OUTCH
-      JSR @PARSE
+      JSR @PARSE   
 SKPAD CLV
       BVC CONSL
 
