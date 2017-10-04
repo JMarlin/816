@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <termios.h>
+#include <string.h>
 
 #define RAM_SIZE  16*1024
 #define ROM_SIZE  32*1024
@@ -20,6 +21,8 @@ byte spi_out = 0;
 int shifter = 0;
 word32 last_time = 0;
 word32 last_poll = 0;
+int debugger_is_on = 0;
+int breakpoints_are_enabled = 0;
 
 void (*on_spi_complete)(void) = 0;
 
@@ -56,8 +59,10 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     double time_elapsed;
     static long old_nsecs, new_nsecs, nsec_diff;
 
-     
-
+    //TODO: Replace this with some kind of actual debug console
+    if(debugger_is_on)
+        while(getch() < 1); //DEBUG REMOVE 
+    
     //CPU emulation throttling
     while(1) {
     
@@ -184,6 +189,12 @@ void MEM_writeMem(word32 address, byte b, word32 timestamp) {
     if(address & 0x8000)
         output_register = b; 
     else if(!(address & 0x4000)) {
+        
+        if(address == 0x0000FF) {
+
+            debugger_is_on = debugger_is_on ? 0 : breakpoints_are_enabled;
+	    CPU_setTrace(debugger_is_on);
+	}
 
         REN_rambuf[address & 0x3FFF] = b;
 /*
@@ -254,8 +265,19 @@ int main(int argc, char* argv[]) {
 
     static struct termios oldit, newit, oldot, newot;
 
-    //CPU_setTrace(1);
+    //Get args
+    if(argc > 1) {
+   
+        int i;
+	for(i = 1; i < argc; i++) {
+	
+	    if(!strcmp(argv[i], "--enable-breakpoints"))
+                breakpoints_are_enabled = 1;
+	}
+    }
+
     CPU_reset();
+    CPU_setTrace(0);
     CPUEvent_initialize();
     CPU_setUpdatePeriod(1);
 

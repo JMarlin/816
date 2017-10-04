@@ -9,6 +9,7 @@
 #define txt_buffer $0200
 #define incoming_ch $06
 #define cmd_count $07
+#define str_base $08
 #define cmd_buffer $0300
 #define in_reg $4000
 #define out_reg $FFFF
@@ -16,7 +17,11 @@
 #define din_pin_mask $02
 #define dout_pin_mask $01
 
-START CLV       ;Clear overflow, disable emulation mode
+.al
+.xl
+
+START STA $FF   ;Turn debugger on
+      CLV       ;Clear overflow, disable emulation mode
       CLC
       XCE
       LDA #$01  ;Set stack pointer to $01FF (grows downward)
@@ -25,7 +30,14 @@ START CLV       ;Clear overflow, disable emulation mode
       TCS
       JMP @MAINL ;go to the main application
 
-PROMT .asc ">"
+PROMT .asc "-->"
+      .byte $0
+
+HLMSG .asc "Hello to you too!"
+      .byte $A, $0
+
+hello_string .asc "hello"
+             .byte $0
 
 DOSPI PHX
       LDA #$00      ;reset byte counter
@@ -78,6 +90,33 @@ OUTCH PHX
 OCHDN PLX
       RTL
 
+PRNTS         ;STA $FF         ;Writing to 00/00FF toggles the debugger
+      PHY
+      STA str_base
+      TBA ;str_base + 1
+      STA str_base + 1
+      LDY #$00
+      CLV
+PRTOP LDA (str_base),Y 
+      BEQ PRDN
+      JSR @OUTCH
+      INY     ;Cleverly, this should force us to also exit if and when Y wraps
+      BVC PRTOP
+PRDN  PLY
+              ;STA $FF        ;Turn the debugger off
+      RTL
+
+HLOCM PHA
+      PHX
+      LDA #HLMSG
+      JSR PRNTS
+      PLX
+      PLA
+      RTL
+
+STCMP CLC   ;Hardwired to return false for now
+      RTL
+
 PARSE PHX
       PHY
       LDX cmd_count
@@ -93,8 +132,13 @@ PARSE PHX
 CHECK PHA
       LDA #$00
       STA cmd_buffer,X ;We'll parse this some day
-      LDA PROMT
-      JSR @OUTCH
+      LDA #cmd_buffer
+      LDX #hello_string  ;Make this a loop through an entry table and a jump table some time
+      JSR STCMP
+      BCC PRPMT
+      JSR HLOCM
+PRPMT LDA #PROMT
+      JSR @PRNTS
       LDY #$00
       STY cmd_buffer
       STY cmd_count
@@ -110,8 +154,8 @@ MAINL
       STA out_reg     ;Set display
       LDA #$00
       STA out_count   ;init output buffer
-      LDA PROMT
-      JSR @OUTCH      ;print command prompt
+      LDA #PROMT
+      JSR @PRNTS      ;print command prompt
 CONSL
       LDA out_count   ;load SPI output buffer with number of waiting bytes
       STA spi_out
