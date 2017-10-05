@@ -17,10 +17,7 @@
 #define din_pin_mask $02
 #define dout_pin_mask $01
 
-.al
-.xl
-
-START STA $FF   ;Turn debugger on
+START ;STA $FF   ;Turn debugger on
       CLV       ;Clear overflow, disable emulation mode
       CLC
       XCE
@@ -93,7 +90,7 @@ OCHDN PLX
 PRNTS         ;STA $FF         ;Writing to 00/00FF toggles the debugger
       PHY
       STA str_base
-      TBA ;str_base + 1
+      XBA
       STA str_base + 1
       LDY #$00
       CLV
@@ -108,7 +105,9 @@ PRDN  PLY
 
 HLOCM PHA
       PHX
-      LDA #HLMSG
+      LDA #HLMSG/256
+      XBA
+      LDA #HLMSG&255
       JSR PRNTS
       PLX
       PLA
@@ -129,15 +128,21 @@ PARSE PHX
       STX cmd_count
       CLV
       BVC PRSDN
-CHECK PHA
+CHECK STA $FF ;Enable debugger
+      PHA
       LDA #$00
       STA cmd_buffer,X ;We'll parse this some day
-      LDA #cmd_buffer
-      LDX #hello_string  ;Make this a loop through an entry table and a jump table some time
+      LDA #cmd_buffer/256
+      XBA
+      LDA #cmd_buffer&255
+      LDX #hello_string/256
+      LDY #hello_string&255
       JSR STCMP
       BCC PRPMT
       JSR HLOCM
-PRPMT LDA #PROMT
+PRPMT LDA #PROMT/256
+      XBA
+      LDA #PROMT&255
       JSR @PRNTS
       LDY #$00
       STY cmd_buffer
@@ -154,7 +159,9 @@ MAINL
       STA out_reg     ;Set display
       LDA #$00
       STA out_count   ;init output buffer
-      LDA #PROMT
+      LDA #PROMT/256
+      XBA
+      LDA #PROMT&255
       JSR @PRNTS      ;print command prompt
 CONSL
       LDA out_count   ;load SPI output buffer with number of waiting bytes
