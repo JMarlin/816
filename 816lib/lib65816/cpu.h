@@ -177,6 +177,9 @@ void CPU_setTrace(int mode);
 
 void CPU_reset(void);
 
+/* Exit the cpu run loop */
+void CPU_quit(void);
+
 /* Send an abort to the 65816 emulator. */
 
 void CPU_abort(void);

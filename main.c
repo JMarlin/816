@@ -8,7 +8,12 @@
 
 #define RAM_SIZE  16*1024
 #define ROM_SIZE  32*1024
+#define EXIT_DEBUGGER -1
+#define QUIT_APPLICATION -2
+#define INVALID_COMMAND 0
 
+struct termios oldit, newit, oldot, newot;
+char dbg_inbuf[255];
 unsigned char* REN_rombuf;
 unsigned char* REN_rambuf;
 int romsize;
@@ -22,7 +27,7 @@ int shifter = 0;
 word32 last_time = 0;
 word32 last_poll = 0;
 int debugger_is_on = 0;
-int breakpoints_are_enabled = 0;
+int debugger_is_enabled = 0;
 
 void (*on_spi_complete)(void) = 0;
 
@@ -46,6 +51,134 @@ int kbhit();
 int getch();
 void spi_print();
 
+void read_line(char* out_buffer, unsigned int bufsz) {
+
+    int next_char = 0;
+    int i = 0;
+ 
+    while(1) {
+
+        while((next_char = getch()) < 0);
+
+        printf("%c", (char)(next_char&0xFF));
+        fflush(stdout);
+
+	if((char)(next_char&0xFF) == '\n') {
+	    
+	    out_buffer[i] = 0x0;
+	    return;
+	}
+
+	out_buffer[i++] = (char)(next_char&0xFF);
+
+	if(i == bufsz - 1) {
+
+	    out_buffer[i] = 0x0;
+	    return;
+	}
+    }
+}
+
+typedef int (*debug_func)(char*);
+
+int debug_run(char* command_string) {
+
+    debugger_is_on = 0;
+    //CPU_setTrace(0);
+
+    return EXIT_DEBUGGER;
+}
+
+int debug_step(char* command_string) {
+
+    return EXIT_DEBUGGER;
+}
+
+int debug_exit(char* command_string) {
+
+    return QUIT_APPLICATION;
+}
+
+int hex_to_int(char* hex_string, int* out_int) {
+
+    return 1;
+}
+
+int debug_set_breakpoint(char* command_string) {
+
+    char addrbuf[7] = {0};
+    int break_addr;
+ 
+    while(1) {
+
+        printf("Break on what address?: ");
+        fflush(stdout);
+        read_line(addrbuf, 6);
+
+        if(hex_to_int(addrbuf, &break_addr))
+            break;
+
+        printf("Bad address.\n");
+        fflush(stdout);
+    }
+}
+
+int dispatch_command(char* command_string) {
+
+#define COMMAND_COUNT 4
+    static char* command_names[COMMAND_COUNT] = {
+        "run",
+	"step",
+        "break",
+	"exit"
+    };
+    static debug_func command_pointers[COMMAND_COUNT] = {
+        debug_run,
+	debug_step,
+        debug_set_breakpoint,
+	debug_exit
+    };
+
+    //Todo: Later, we should split up the incoming string just like an incoming argv array
+
+    int i;
+    
+    for(i = 0; i < COMMAND_COUNT; i++) {
+        
+	if(!strcmp(command_names[i], command_string))
+	    return command_pointers[i](command_string);
+    }
+
+    return INVALID_COMMAND;
+}
+
+void enter_debug_console() {
+
+    CPU_debug();
+
+    while(1) {
+
+	printf("dbg>");
+	fflush(stdout);
+	read_line(dbg_inbuf, 255);
+
+	switch(dispatch_command(dbg_inbuf)) {
+	    case EXIT_DEBUGGER:
+                return;
+		break;
+	    case QUIT_APPLICATION:
+		CPU_quit();
+		return;
+		break;
+	    case INVALID_COMMAND:
+	    default:
+		printf("Invalid command.\n");
+		fflush(stdout);
+		break;
+	}
+    }
+}
+
 void EMUL_hardwareUpdate(word32 timestamp) {
 
     static int oldE = 0;
@@ -59,9 +192,11 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     double time_elapsed;
     static long old_nsecs, new_nsecs, nsec_diff;
 
-    //TODO: Replace this with some kind of actual debug console
-    if(debugger_is_on)
-        while(getch() < 1); //DEBUG REMOVE 
+    //Todo
+    //check_breakpoints();
+
+    if(debugger_is_on) 
+	enter_debug_console();
     
     //CPU emulation throttling
     while(1) {
@@ -192,8 +327,8 @@ void MEM_writeMem(word32 address, byte b, word32 timestamp) {
         
         if(address == 0x0000FF) {
 
-            debugger_is_on = debugger_is_on ? 0 : breakpoints_are_enabled;
-	    CPU_setTrace(debugger_is_on);
+            debugger_is_on = debugger_is_on ? 0 : debugger_is_enabled;
+	    //CPU_setTrace(debugger_is_on);
 	}
 
         REN_rambuf[address & 0x3FFF] = b;
@@ -263,7 +398,7 @@ void spi_print(void) {
 
 int main(int argc, char* argv[]) {
 
-    static struct termios oldit, newit, oldot, newot;
+    //static struct termios oldit, newit, oldot, newot;
 
     //Get args
     if(argc > 1) {
@@ -271,13 +406,15 @@ int main(int argc, char* argv[]) {
         int i;
 	for(i = 1; i < argc; i++) {
 	
-	    if(!strcmp(argv[i], "--enable-breakpoints"))
-                breakpoints_are_enabled = 1;
+	    if(!strcmp(argv[i], "--enable-debugger"))
+                debugger_is_enabled = 1;
 	}
     }
 
+    debugger_is_on = debugger_is_enabled;
+
     CPU_reset();
-    CPU_setTrace(0);
+    //CPU_setTrace(debugger_is_on);
     CPUEvent_initialize();
     CPU_setUpdatePeriod(1);
 
@@ -285,15 +422,15 @@ int main(int argc, char* argv[]) {
     fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK);
 
     //Turn off line-at-a-time
-    tcgetattr(0, &oldit);
+    tcgetattr(STDIN_FILENO, &oldit);
     newit = oldit;
     newit.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(0, TCSANOW, &newit);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &newit);
 
-    tcgetattr(1, &oldot);
+    tcgetattr(STDOUT_FILENO, &oldot);
     newot = oldot;
     newot.c_lflag &= ~(ICANON);
-    tcsetattr(0, TCSANOW, &newot);
+    tcsetattr(STDOUT, TCSANOW, &newot);
 
     FILE* romfile = fopen("boot.rom", "rb");
 
@@ -347,8 +484,12 @@ int main(int argc, char* argv[]) {
     CPU_run();
 
     fclose(romfile);
-    tcsetattr(0, TCSANOW, &oldit);
-    tcsetattr(0, TCSANOW, &oldot);
+
+    //Reset console mode
+    fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) & ~O_NONBLOCK);
+    oldit.c_lflag |= ICANON | ECHO;
+    tcsetattr(STDIN_FILENO, TCSANOW, &oldit);
+    tcsetattr(STDOUT_FILENO, TCSANOW, &oldot);
  
     return 0;
 }

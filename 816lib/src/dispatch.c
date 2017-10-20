@@ -44,10 +44,16 @@ byte        *cpu_curr_cycle_table;
 #endif
 void        (**cpu_curr_opcode_table)();
 
+int cpu_running = 1;
 extern int  cpu_reset,cpu_abort,cpu_nmi,cpu_irq,cpu_stop,cpu_wait,cpu_trace;
 extern int  cpu_update_period;
 
 extern void (*cpu_opcode_table[1300])();
+
+void CPU_quit() {
+
+    cpu_running = 0;
+}
 
 #ifdef OLDCYCLES
 /* Base cycle counts for all possible 1300 opcodes (260 opcodes x 5 modes).     */
@@ -162,6 +168,8 @@ void CPU_run(void)
     CPU_modeSwitch();
 
 dispatch:
+    if(!cpu_running) 
+        return;
 //    CPUEvent_elapse( cpu_cycle_count );
 //    cpu_cycle_count = 0;
 

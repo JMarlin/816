@@ -13,7 +13,7 @@
  * Modified for greater portability and virtual hardware independence.
  */
 
-#include "config.h"
+#include "816lib/lib65816/config.h"
 
 
 /* Type definitions for convenience.  These are not intended to be used
@@ -176,6 +176,9 @@ void CPU_setTrace(int mode);
 /* startup before you call CPU_run().               */
 
 void CPU_reset(void);
+
+/* Exit the cpu run loop */
+void CPU_quit(void);
 
 /* Send an abort to the 65816 emulator. */
 
