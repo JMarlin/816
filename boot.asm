@@ -186,8 +186,8 @@ CMPLP
       BCC CMPLP
       LDA cmd_index
       SBC #$02
-      TXA
-      JSR (cmd_ptr_table),X
+      TAX
+      JSR (cmd_ptr_table,X)
 PRPMT LDA #PROMT/256
       XBA
       LDA #PROMT&255
