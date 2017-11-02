@@ -11,7 +11,8 @@
 #define cmd_count $07
 #define str_base $08
 #define cmp_base $0A
-#define cmd_index $0C
+#define temp_addr $0C
+#define cmd_index $0E
 #define cmd_buffer $0300
 #define in_reg $4000
 #define out_reg $FFFF
@@ -166,26 +167,27 @@ PARSE PHX
 CHECK PHA
       LDA #$00
       STA cmd_buffer,X ;We'll parse this some day
-      LDX #<cmd_buffer
+      LDX #>cmd_buffer
       LDY #$00
       STY cmd_index
 CMPLP
       LDY cmd_index
       CPY #command_count*2
       BEQ PRPMT
-      LDA (cmd_str_table),Y
+      LDA cmd_str_table,Y
       XBA
       INY
-      LDA (cmd_str_table),Y
+      LDA cmd_str_table,Y
       INY
+      XBA
       STY cmd_index
-      LDY #>cmd_buffer
+      LDY #<cmd_buffer
       JSR @STCMP
       BCC CMPLP
       LDA cmd_index
       SBC #$02
       TXA
-      JSR (cmd_ptr_table,X)
+      JSR (cmd_ptr_table),X
 PRPMT LDA #PROMT/256
       XBA
       LDA #PROMT&255
