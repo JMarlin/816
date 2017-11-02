@@ -10,6 +10,8 @@
 #define incoming_ch $06
 #define cmd_count $07
 #define str_base $08
+#define cmp_base $0A
+#define cmd_index $0C
 #define cmd_buffer $0300
 #define in_reg $4000
 #define out_reg $FFFF
@@ -17,8 +19,7 @@
 #define din_pin_mask $02
 #define dout_pin_mask $01
 
-START ;STA $FF   ;Turn debugger on
-      CLV       ;Clear overflow, disable emulation mode
+START CLV       ;Clear overflow, disable emulation mode
       CLC
       XCE
       LDA #$01  ;Set stack pointer to $01FF (grows downward)
@@ -32,8 +33,17 @@ PROMT .asc "-->"
 
 HLMSG .asc "Hello to you too!"
       .byte $A, $0
+LDMSG .asc "LOAD not implemented yet."
+      .byte $A, $0
 
+#define command_count $02
+cmd_str_table .word hello_string
+              .word load_string
+cmd_ptr_table .word HLOCM
+              .word LODCM
 hello_string .asc "hello"
+             .byte $0
+load_string  .asc "load"
              .byte $0
 
 DOSPI PHX
@@ -87,8 +97,7 @@ OUTCH PHX
 OCHDN PLX
       RTL
 
-PRNTS         ;STA $FF         ;Writing to 00/00FF toggles the debugger
-      PHY
+PRNTS PHY
       STA str_base
       XBA
       STA str_base + 1
@@ -100,7 +109,6 @@ PRTOP LDA (str_base),Y
       INY     ;Cleverly, this should force us to also exit if and when Y wraps
       BVC PRTOP
 PRDN  PLY
-              ;STA $FF        ;Turn the debugger off
       RTL
 
 HLOCM PHA
@@ -108,12 +116,39 @@ HLOCM PHA
       LDA #HLMSG/256
       XBA
       LDA #HLMSG&255
-      JSR PRNTS
+      JSR @PRNTS
       PLX
       PLA
-      RTL
+      RTS
 
-STCMP CLC   ;Hardwired to return false for now
+LODCM PHA
+      PHX
+      LDA #LDMSG/256
+      XBA
+      LDA #LDMSG&255
+      JSR @PRNTS
+      PLX
+      PLA
+      RTS
+
+STCMP PHY
+      STA str_base
+      XBA
+      STA str_base + 1
+      STY cmp_base
+      STX cmp_base + 1
+      LDY #$00
+      CLV
+      SEC
+SCTOP LDA (str_base),Y
+      CMP (cmp_base),Y
+      BNE SCFL
+      CMP #$00
+      BEQ SCDN
+      INY     ;Cleverly, this should force us to also exit if and when Y wraps
+      BVC SCTOP
+SCFL  CLC
+SCDN  PLY
       RTL
 
 PARSE PHX
@@ -128,18 +163,29 @@ PARSE PHX
       STX cmd_count
       CLV
       BVC PRSDN
-CHECK STA $FF ;Enable debugger
-      PHA
+CHECK PHA
       LDA #$00
       STA cmd_buffer,X ;We'll parse this some day
-      LDA #cmd_buffer/256
+      LDX #<cmd_buffer
+      LDY #$00
+      STY cmd_index
+CMPLP
+      LDY cmd_index
+      CPY #command_count*2
+      BEQ PRPMT
+      LDA (cmd_str_table),Y
       XBA
-      LDA #cmd_buffer&255
-      LDX #hello_string/256
-      LDY #hello_string&255
-      JSR STCMP
-      BCC PRPMT
-      JSR HLOCM
+      INY
+      LDA (cmd_str_table),Y
+      INY
+      STY cmd_index
+      LDY #>cmd_buffer
+      JSR @STCMP
+      BCC CMPLP
+      LDA cmd_index
+      SBC #$02
+      TXA
+      JSR (cmd_ptr_table,X)
 PRPMT LDA #PROMT/256
       XBA
       LDA #PROMT&255
@@ -151,7 +197,6 @@ PRPMT LDA #PROMT/256
 PRSDN PLY
       PLX
       RTL
-
 
 MAINL
       LDA #$AA
@@ -187,6 +232,7 @@ ENDFL LDX #$00
 SKPAD CLV
       BVC CONSL
 
+CDEND
 .dsb $FFFC - *,$00
 .word START
 .byte $00

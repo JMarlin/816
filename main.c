@@ -5,6 +5,8 @@
 #include <fcntl.h>
 #include <termios.h>
 #include <string.h>
+#include <unistd.h>
+#include <string.h>
 
 #define RAM_SIZE  16*1024
 #define ROM_SIZE  32*1024
@@ -12,8 +14,14 @@
 #define QUIT_APPLICATION -2
 #define INVALID_COMMAND 0
 
+<<<<<<< HEAD
+#define DBG_CMD_PROCEED 1
+#define DBG_CMD_REMAIN 2
+
+=======
 struct termios oldit, newit, oldot, newot;
 char dbg_inbuf[255];
+>>>>>>> 89f4e9f6d5b00cf5ea8460112056537af8aac737
 unsigned char* REN_rombuf;
 unsigned char* REN_rambuf;
 int romsize;
@@ -51,6 +59,338 @@ int kbhit();
 int getch();
 void spi_print();
 
+<<<<<<< HEAD
+int read_line(char* buffer, unsigned int buf_size) {
+
+    char temp_char = 0;
+    unsigned int char_count = 0;
+
+    while(1) {
+    
+        while(!kbhit());
+
+        temp_char = getch() & 0xFF;
+        buffer[char_count] = temp_char;
+        printf("%c", temp_char); fflush(stdout);
+
+        if(temp_char == '\n')
+            break;
+        
+        char_count++;
+
+        if(char_count == (buf_size - 1)) {
+
+            char_count++;
+            break;
+        }
+    }
+
+    buffer[char_count] = 0;
+    return char_count;
+}
+
+typedef int (*DebugCommandFunction)(int, char**);
+
+int debug_command_step(int argc, char* argv[]) {
+
+    return DBG_CMD_PROCEED;
+}
+
+int debug_command_run(int argc, char* argv[]) {
+
+    debugger_is_on = 0;
+    return DBG_CMD_PROCEED;
+}
+
+int hex24_to_int(char* hex_string) {
+
+    char* ptr;
+
+    if(strlen(hex_string) != 6)
+        return -1;
+
+    return strtol(hex_string, &ptr, 16);
+}
+
+#define BP_MODE_CHECK 0
+#define BP_MODE_INSERT 1
+#define BP_MODE_REMOVE -1
+#define BP_MODE_COUNT 2
+#define BP_MODE_GET 3
+
+int breakpoint_check(int address, int mode) {
+
+    static unsigned int bp_count = 0;
+    static int* bp_entry = (int*)0;
+
+    int found_index = -1;
+    int i;
+
+    if(mode == 2) { //Mode 2 == get entry count 
+        
+        return (int)bp_count;
+    }
+
+    if(address > 0xFFFFFF || address < 0)
+        return -1; //Bad address 
+
+    if(mode == 3) { //Mode 3 == get entry at index  
+
+        if(address >= bp_count)
+            return 0; //Address not found
+
+        return (int)bp_entry[address];
+    }
+
+    for(i = 0; i < bp_count; i++)
+        if(bp_entry[i] == address) {
+            
+            found_index = i;
+            break;
+        }
+
+    if(found_index == -1 && mode == 1) { //mode 1 == insert breakpoint
+
+        bp_entry = (int*)realloc((void*)bp_entry, sizeof(int) * (bp_count + 1));
+        bp_entry[bp_count++] = address;
+    }
+
+    if(found_index != -1 && mode == -1) { //mode -1 == delete breakpoint
+
+        for(i = found_index; i < bp_count - 1; i++)
+            bp_entry[found_index] = bp_entry[found_index + 1];
+
+        bp_count--;
+    }
+
+    return found_index != -1;
+}
+
+int debug_command_break(int argc, char* argv[]) {
+
+    if(argc != 2 && argc != 1) {
+
+        printf("Wrong number of arguments.\nUsage: break <24-bit-hex-address>\n");
+        fflush(stdout);
+
+        return DBG_CMD_REMAIN;
+    }
+
+    if(argc == 1) {
+
+        int i;
+
+        for(i = 0; i < breakpoint_check(0, BP_MODE_COUNT); i++) {
+
+            printf("    [%d] 0x%06X\n", i, breakpoint_check(i, BP_MODE_GET));
+            fflush(stdout);
+        }
+    } else {
+
+        int address = hex24_to_int(argv[1]);
+
+        if(address < 0) {
+
+            printf("Could not parse the given address '%s'\n", argv[1]);
+            fflush(stdout);
+
+            return DBG_CMD_REMAIN;
+        } 
+
+        switch(breakpoint_check(address, BP_MODE_INSERT)) {
+            case 0:
+                printf("Breakpoint added at %06X\n", address);
+                fflush(stdout);
+                break;
+            case -1:
+                printf("Bad breakpoint address\n");
+                fflush(stdout);
+                break;
+            default:
+                printf("Breakpoint already exists\n");
+                fflush(stdout);
+                break;
+        }
+    }
+
+    return DBG_CMD_REMAIN;
+}
+
+int debug_command_args(int argc, char* argv[]) {
+
+    int i;
+
+    for(i = 0; i < argc; i++) {
+
+        printf("%s\n", argv[i]);
+        fflush(stdout);
+    }
+
+    return DBG_CMD_REMAIN;
+}
+
+int debug_command_exam(int argc, char* argv[]) {
+
+    int count = 16;
+    int address = 0;
+    int i;
+
+    if(argc != 2 && argc != 3) {
+
+        printf("Usage: exam [base-address] <count>\n");
+        fflush(stdout);
+
+        return DBG_CMD_REMAIN;
+    }
+
+    if(argc == 3)
+        count = atoi(argv[2]);
+
+    address = hex24_to_int(argv[1]);
+
+    if(address < 0) {
+
+        printf("Bad address.\n");
+        fflush(stdout);
+
+        return DBG_CMD_REMAIN;
+    }
+
+    printf("%06X: ", address);
+    fflush(stdout);
+
+    for(i = 0; i < count; i++) {
+
+        printf("%02X", MEM_readMem((int)address + i, 0, 0));
+
+        if(i == count - 1)
+            printf("\n");
+        else
+            printf(" ");
+    }
+
+    return DBG_CMD_REMAIN;
+}
+
+char** string_to_argv(char* input_buffer, int* argc) {
+
+    char** return_array = (char**)0;
+    int building = 0;
+    char read_buffer[256];
+    int chars_read;
+
+    *argc = 0;
+
+    while(1) {
+
+        if(building) {
+
+            if(*input_buffer <= ' ') {
+
+                return_array[(*argc) - 1] = (char*)malloc(sizeof(char) * (chars_read + 1));
+                memcpy((void*)return_array[(*argc) - 1], (void*)read_buffer, chars_read);
+                return_array[(*argc) - 1][chars_read] = 0;
+                building = 0;
+
+                if(*input_buffer == 0)
+                    break;
+
+                continue;
+            }
+
+            read_buffer[chars_read++] = *input_buffer++;
+        } else {
+
+            if(*input_buffer <= ' ') {
+
+                if(*input_buffer == 0)
+                    break;
+
+                input_buffer++;
+                continue;
+            }
+
+            return_array = (char**)realloc((void*)return_array, sizeof(char*) * (++(*argc))); //This can fail. That would be bad.
+            building = 1;
+            chars_read = 0;
+        }        
+    } 
+
+    return return_array;
+}
+
+void free_argv_memory(int argc, char* argv[]) {
+
+    int i;
+
+    for(i = 0; i < argc; i++)
+        free((void*)argv[i]);
+    
+    free((void*)argv);
+}
+
+int parse_debug_command(char* command_buffer) {
+
+#define COMMAND_COUNT 5
+    char* command_entry[COMMAND_COUNT] = {
+        "step",
+        "run",
+        "break",
+        "args",
+        "exam"
+    };
+    DebugCommandFunction command_function[COMMAND_COUNT] = {
+        debug_command_step,
+        debug_command_run,
+        debug_command_break,
+        debug_command_args,
+        debug_command_exam
+    };
+
+    int argc;
+    int retval = 0;
+    char** argv = string_to_argv(command_buffer, &argc);
+
+    if(argc == 0)
+        return 0;
+
+    int i;
+    for(i = 0; i < COMMAND_COUNT; i++)
+        if(!strcmp(command_entry[i], argv[0])) {
+
+            retval = command_function[i](argc, argv); //TODO: Split command buffer into argvals
+            break;
+        }
+
+    free_argv_memory(argc, argv);
+
+    return retval;
+}
+
+void do_debugger(void) {
+
+    static char in_buf[256] = {0};
+    int parse_result = 0;
+    int execution_paused = 1;
+
+    CPU_debug();
+    while(execution_paused) {
+    
+        printf("dbg>"); fflush(stdout);
+
+        read_line(in_buf, 256);
+        
+        switch(parse_debug_command(in_buf)) {
+            case DBG_CMD_PROCEED:
+                execution_paused = 0;
+                break;
+            case DBG_CMD_REMAIN:
+                 break;
+            default:
+                printf("Unknown debugger command.\n"); fflush(stdout);
+                break;
+        }
+=======
 void read_line(char* out_buffer, unsigned int bufsz) {
 
     int next_char = 0;
@@ -176,6 +516,7 @@ void enter_debug_console() {
 		fflush(stdout);
 		break;
 	}
+>>>>>>> 89f4e9f6d5b00cf5ea8460112056537af8aac737
     }
 }
 
@@ -192,11 +533,22 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     double time_elapsed;
     static long old_nsecs, new_nsecs, nsec_diff;
 
+<<<<<<< HEAD
+    if(breakpoint_check(PC.A, BP_MODE_CHECK) > 0) {
+
+        printf("[Breakpoint encountered at %06X]\n", PC.A);
+        debugger_is_on = 1;
+    }
+
+    if(debugger_is_on)
+        do_debugger();
+=======
     //Todo
     //check_breakpoints();
 
     if(debugger_is_on) 
 	enter_debug_console();
+>>>>>>> 89f4e9f6d5b00cf5ea8460112056537af8aac737
     
     //CPU emulation throttling
     while(1) {
@@ -326,10 +678,17 @@ void MEM_writeMem(word32 address, byte b, word32 timestamp) {
     else if(!(address & 0x4000)) {
         
         if(address == 0x0000FF) {
+<<<<<<< HEAD
+            //We'll set ACTUAL breakpoints after this
+            //debugger_is_on = debugger_is_on ? 0 : breakpoints_are_enabled;
+            //CPU_setTrace(debugger_is_on);
+        }
+=======
 
             debugger_is_on = debugger_is_on ? 0 : debugger_is_enabled;
 	    //CPU_setTrace(debugger_is_on);
 	}
+>>>>>>> 89f4e9f6d5b00cf5ea8460112056537af8aac737
 
         REN_rambuf[address & 0x3FFF] = b;
 /*
@@ -362,6 +721,12 @@ int getch() {
         return r;
     else
         return c;
+}
+
+//TODO
+int input(char* inbuf, int bufsz) {
+
+    while(!getch());
 }
 
 void spi_print(void) {
@@ -404,17 +769,29 @@ int main(int argc, char* argv[]) {
     if(argc > 1) {
    
         int i;
+<<<<<<< HEAD
+        for(i = 1; i < argc; i++) {
+        
+            if(!strcmp(argv[i], "--debug"))
+                    debugger_is_on = 1;
+        }
+=======
 	for(i = 1; i < argc; i++) {
 	
 	    if(!strcmp(argv[i], "--enable-debugger"))
                 debugger_is_enabled = 1;
 	}
+>>>>>>> 89f4e9f6d5b00cf5ea8460112056537af8aac737
     }
 
     debugger_is_on = debugger_is_enabled;
 
     CPU_reset();
+<<<<<<< HEAD
+    //CPU_setTrace(0);
+=======
     //CPU_setTrace(debugger_is_on);
+>>>>>>> 89f4e9f6d5b00cf5ea8460112056537af8aac737
     CPUEvent_initialize();
     CPU_setUpdatePeriod(1);
 
