@@ -400,6 +400,7 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     double clocks_elapsed;
     double time_elapsed;
     static long old_nsecs, new_nsecs, nsec_diff;
+    static int i_count = 0;
 
     if(breakpoint_check(PC.A, BP_MODE_CHECK) > 0) {
 
@@ -410,6 +411,16 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     if(debugger_is_on)
         do_debugger();
     
+    //I want to do this based on time and not instruction count in the future
+    //May even be possible to put this into a timer thread so that the interrupt
+    //in the virtualized system is functionally mapped to an interrupt in the
+    //host machine
+    if(i_count++ > 5000000) {
+
+        i_count = 0;
+        CPU_addIRQ(1);
+    }
+
     //CPU emulation throttling
     while(1) {
     
@@ -421,8 +432,10 @@ void EMUL_hardwareUpdate(word32 timestamp) {
         else
             nsec_diff = new_nsecs - old_nsecs;
         
-        if(nsec_diff >= 160)
+        if(nsec_diff >= 200) {
+
             break;
+        }
     }
 
     old_nsecs = new_nsecs;

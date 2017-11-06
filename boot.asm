@@ -46,6 +46,8 @@ hello_string .asc "hello"
              .byte $0
 load_string  .asc "load"
              .byte $0
+int_str .asc "INTERRUPT"
+        .byte $0A, $00
 
 DOSPI PHX
       LDA #$00      ;reset byte counter
@@ -234,8 +236,22 @@ ENDFL LDX #$00
 SKPAD CLV
       BVC CONSL
 
+INTST     ;We should test to make sure our interrupt is actually coming from the debug port
+      LDA #<int_str
+      XBA
+      LDA #>int_str
+      JSR @PRNTS
+      RTI
+
 CDEND
-.dsb $FFFC - *,$00
-.word START
+.dsb $FFEE - *,$00
+.word INTST ;FFEE,EF
+.word 0     ;FFF0,F1
+.word 0     ;FFF2,F3
+.word 0     ;FFF4,F5
+.word 0     ;FFF6,F7
+.word 0     ;FFF8,F9
+.word 0     ;FFFA,FB
+.word START ;FFFC,FD
 .byte $00
 .byte $AA
