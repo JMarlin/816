@@ -405,6 +405,7 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     if(breakpoint_check(PC.A, BP_MODE_CHECK) > 0) {
 
         printf("[Breakpoint encountered at %06X]\n", PC.A);
+        fflush(stdout);
         debugger_is_on = 1;
     }
 
@@ -418,6 +419,8 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     if(i_count++ > 5000000) {
 
         i_count = 0;
+        //printf("[Interrupt fired]\n"); 
+        //fflush(stdout);
         CPU_addIRQ(1);
     }
 

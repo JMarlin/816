@@ -208,6 +208,11 @@ MAINL
       STA out_reg     ;Set display
       LDA #$00
       STA out_count   ;init output buffer
+      PHP             ;Clear IRQ Disable bit
+      PLA
+      AND #$FB
+      PHA
+      PLP
       LDA #PROMT/256
       XBA
       LDA #PROMT&255
@@ -237,9 +242,9 @@ SKPAD CLV
       BVC CONSL
 
 INTST     ;We should test to make sure our interrupt is actually coming from the debug port
-      LDA #<int_str
-      XBA
       LDA #>int_str
+      XBA
+      LDA #<int_str
       JSR @PRNTS
       RTI
 
