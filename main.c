@@ -416,13 +416,13 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     //May even be possible to put this into a timer thread so that the interrupt
     //in the virtualized system is functionally mapped to an interrupt in the
     //host machine
-    if(i_count++ > 5000000) {
+    //if(i_count++ > 5000000) {
 
-        i_count = 0;
+        //i_count = 0;
         //printf("[Interrupt fired]\n"); 
         //fflush(stdout);
-        CPU_addIRQ(1);
-    }
+        //CPU_addIRQ(1);
+    //}
 
     //CPU emulation throttling
     while(1) {
@@ -475,6 +475,7 @@ void EMUL_hardwareUpdate(word32 timestamp) {
             shifter = 0;
             last_time = timestamp;
             input_register = 0;
+            CPU_addIRQ(1);
         } else {
 
             //Wait 100 cycles between steps

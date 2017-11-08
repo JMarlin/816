@@ -13,6 +13,7 @@
 #define cmp_base $0A
 #define temp_addr $0C
 #define cmd_index $0E
+#define cmd_ptr $10
 #define cmd_buffer $0300
 #define in_reg $4000
 #define out_reg $FFFF
@@ -154,6 +155,19 @@ SCFL  CLC
 SCDN  PLY
       RTL
 
+RDCHR PHX
+      LDX cmd_ptr
+      CPX cmd_count
+      BNE DORD
+      LDA #$00
+      CLV
+      BVC RDEXT
+DORD  LDA cmd_buffer,X
+      INX
+      STX cmd_ptr
+RDEXT PLX
+      RTL
+
 PARSE PHX
       PHY
       LDX cmd_count
@@ -208,6 +222,8 @@ MAINL
       STA out_reg     ;Set display
       LDA #$00
       STA out_count   ;init output buffer
+      STA cmd_ptr
+      STA cmd_count
       PHP             ;Clear IRQ Disable bit
       PLA
       AND #$FB
@@ -218,35 +234,41 @@ MAINL
       LDA #PROMT&255
       JSR @PRNTS      ;print command prompt
 CONSL
-      LDA out_count   ;load SPI output buffer with number of waiting bytes
-      STA spi_out
-      JSR @DOSPI      ;do an SPI transfer 
-      LDA spi_in      ;get the value sent by the master, store temporarily
-      STA incoming_ch 
-      LDX #$00        ;wait for master to flush output buffer
-FLSHL CPX out_count
-      BEQ ENDFL
-      LDA txt_buffer,X 
-      STA spi_out
-      JSR @DOSPI
-      INX 
-      CLV
-      BVC FLSHL
-ENDFL LDX #$00
-      STX out_count
-      LDA incoming_ch ;Add the char we were sent to the output buffer if nonzero
-      BEQ SKPAD
-      JSR @OUTCH
       JSR @PARSE   
 SKPAD CLV
       BVC CONSL
 
 INTST     ;We should test to make sure our interrupt is actually coming from the debug port
-      LDA #>int_str
-      XBA
-      LDA #<int_str
-      JSR @PRNTS
-      RTI
+      PHP ;Check to make sure it wasn't a BRK interrupt
+      PLA
+      AND #$10
+      BEQ IEXIT
+TXL   LDA out_count
+      STA spi_out
+      JSR @DOSPI
+      LDA spi_in
+      STA incoming_ch
+      LDX #$00
+FLSHL CPX out_count
+      BEQ ENDFL
+      LDA txt_buffer,X
+      STA spi_out
+      JSR @DOSPI
+      INX
+      CLV
+      BVC FLSHL
+ENDFL LDX #$00
+      STX out_count
+      LDA incoming_ch ;Add incoming character to the input buffer
+      BEQ IEXIT
+      LDX cmd_count
+      CPX #$FF
+      BEQ IEXIT
+      STA cmd_buffer,X
+      INX
+      STX cmd_count
+      JSR @OUTCH
+IEXIT RTI
 
 CDEND
 .dsb $FFEE - *,$00
@@ -260,3 +282,4 @@ CDEND
 .word START ;FFFC,FD
 .byte $00
 .byte $AA
+
