@@ -12,9 +12,11 @@
 #define str_base $08
 #define cmp_base $0A
 #define temp_addr $0C
-#define cmd_index $0E
-#define cmd_ptr $10
-#define cmd_buffer $0300
+#define inbuf_count $0E
+#define inbuf_ptr $0F
+#define inbuf $0300
+#define cmd_count $10
+#define cmd_buffer $0400
 #define in_reg $4000
 #define out_reg $FFFF
 #define clock_pin_mask $01
@@ -156,17 +158,19 @@ SCDN  PLY
       RTL
 
 RDCHR PHX
-      LDX cmd_ptr
-      CPX cmd_count
+      LDX inbuf_ptr
+      CPX inbuf_count
       BNE DORD
       LDA #$00
       CLV
       BVC RDEXT
-DORD  LDA cmd_buffer,X
+DORD  LDA inbuf,X
       INX
-      STX cmd_ptr
+      STX inbuf_ptr
 RDEXT PLX
       RTL
+
+
 
 PARSE PHX
       PHY
@@ -185,9 +189,9 @@ CHECK PHA
       STA cmd_buffer,X ;We'll parse this some day
       LDX #>cmd_buffer
       LDY #$00
-      STY cmd_index
+      STY cmd_count
 CMPLP
-      LDY cmd_index
+      LDY cmd_count
       CPY #command_count*2
       BEQ PRPMT
       LDA cmd_str_table,Y
@@ -196,11 +200,11 @@ CMPLP
       LDA cmd_str_table,Y
       INY
       XBA
-      STY cmd_index
+      STY cmd_count
       LDY #<cmd_buffer
       JSR @STCMP
       BCC CMPLP
-      LDA cmd_index
+      LDA cmd_count
       SBC #$02
       TAX
       JSR (cmd_ptr_table,X)
@@ -222,8 +226,9 @@ MAINL
       STA out_reg     ;Set display
       LDA #$00
       STA out_count   ;init output buffer
-      STA cmd_ptr
       STA cmd_count
+      STA inbuf_count
+      STA inbuf_ptr
       PHP             ;Clear IRQ Disable bit
       PLA
       AND #$FB
@@ -233,8 +238,12 @@ MAINL
       XBA
       LDA #PROMT&255
       JSR @PRNTS      ;print command prompt
-CONSL
-      JSR @PARSE   
+CONSL LDX cmd_count
+      CPX #$FF
+      BEQ DOPRS       ;If the command buffer is full, skip any further incoming chars
+CKCHR JSR @RDCHR      ;Get the next character from the incoming ring buffer
+      BEQ CKCHR       ;If the character was zero, try reading again
+DOPRS JSR @PARSE   
 SKPAD CLV
       BVC CONSL
 
@@ -261,12 +270,14 @@ ENDFL LDX #$00
       STX out_count
       LDA incoming_ch ;Add incoming character to the input buffer
       BEQ IEXIT
-      LDX cmd_count
-      CPX #$FF
-      BEQ IEXIT
-      STA cmd_buffer,X
+      LDX inbuf_count
       INX
-      STX cmd_count
+      CPX inbuf_ptr   ;If the 'count' pointer is one cell behind the read pointer then the ring buf is full
+      BEQ IEXIT
+      DEX
+      STA inbuf,X
+      INX
+      STX inbuf_count
       JSR @OUTCH
 IEXIT RTI
 

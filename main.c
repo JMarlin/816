@@ -523,6 +523,7 @@ void EMUL_hardwareUpdate(word32 timestamp) {
             tx_requested = 1;
             on_spi_complete = spi_print;
             last_time = 0;
+            CPU_addIRQ(1);
         } else if(timestamp >= last_poll + 10000) {
 
             last_poll = timestamp;
