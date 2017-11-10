@@ -32,6 +32,7 @@ word32 last_time = 0;
 word32 last_poll = 0;
 int debugger_is_on = 0;
 int debugger_is_enabled = 0;
+int interrupts_enabled = 1;
 
 void (*on_spi_complete)(void) = 0;
 
@@ -54,6 +55,12 @@ void EMUL_handleWDM(byte opcode, word32 timestamp) {
 int kbhit();
 int getch();
 void spi_print();
+
+void add_IRQ(unsigned int mask) {
+
+    if(interrupts_enabled)
+        CPU_addIRQ(mask);
+}
 
 int read_line(char* buffer, unsigned int buf_size) {
 
@@ -112,6 +119,7 @@ int hex24_to_int(char* hex_string) {
 #define BP_MODE_REMOVE -1
 #define BP_MODE_COUNT 2
 #define BP_MODE_GET 3
+#define BP_MODE_CLEAR_ALL 4
 
 int breakpoint_check(int address, int mode) {
 
@@ -135,6 +143,16 @@ int breakpoint_check(int address, int mode) {
             return 0; //Address not found
 
         return (int)bp_entry[address];
+    }
+
+    if(mode == 4) {
+
+        bp_count = 0;
+
+        if(bp_entry)
+            free(bp_entry);
+
+        bp_entry = (int*)0;
     }
 
     for(i = 0; i < bp_count; i++)
@@ -165,7 +183,7 @@ int debug_command_break(int argc, char* argv[]) {
 
     if(argc != 2 && argc != 1) {
 
-        printf("Wrong number of arguments.\nUsage: break <24-bit-hex-address>\n");
+        printf("Wrong number of arguments.\nUsage: break <24-bit-hex-address | clear>\n");
         fflush(stdout);
 
         return DBG_CMD_REMAIN;
@@ -180,6 +198,12 @@ int debug_command_break(int argc, char* argv[]) {
             printf("    [%d] 0x%06X\n", i, breakpoint_check(i, BP_MODE_GET));
             fflush(stdout);
         }
+    } else if(!strcmp(argv[1], "clear")) {
+
+	breakpoint_check(0, BP_MODE_CLEAR_ALL);
+       
+        printf("Breakpoints cleared\n");
+        fflush(stdout);
     } else {
 
         int address = hex24_to_int(argv[1]);
@@ -207,6 +231,23 @@ int debug_command_break(int argc, char* argv[]) {
                 break;
         }
     }
+
+    return DBG_CMD_REMAIN;
+}
+
+int debug_command_toggleint(int argc, char* argv[]) {
+
+    if(argc != 1) {
+
+        printf("toggleint takes no arguments\n");
+        fflush(stdout);
+        return DBG_CMD_REMAIN;
+    }
+
+    interrupts_enabled = !interrupts_enabled;
+
+    printf("interrupts are now %s\n", interrupts_enabled ? "ON" : "OFF");
+    fflush(stdout);
 
     return DBG_CMD_REMAIN;
 }
@@ -326,20 +367,22 @@ void free_argv_memory(int argc, char* argv[]) {
 
 int parse_debug_command(char* command_buffer) {
 
-#define COMMAND_COUNT 5
+#define COMMAND_COUNT 6
     char* command_entry[COMMAND_COUNT] = {
         "step",
         "run",
         "break",
         "args",
-        "exam"
+        "exam",
+        "toggleint"
     };
     DebugCommandFunction command_function[COMMAND_COUNT] = {
         debug_command_step,
         debug_command_run,
         debug_command_break,
         debug_command_args,
-        debug_command_exam
+        debug_command_exam,
+        debug_command_toggleint
     };
 
     int argc;
@@ -475,7 +518,7 @@ void EMUL_hardwareUpdate(word32 timestamp) {
             shifter = 0;
             last_time = timestamp;
             input_register = 0;
-            CPU_addIRQ(1);
+            add_IRQ(1);
         } else {
 
             //Wait 100 cycles between steps
@@ -523,7 +566,7 @@ void EMUL_hardwareUpdate(word32 timestamp) {
             tx_requested = 1;
             on_spi_complete = spi_print;
             last_time = 0;
-            CPU_addIRQ(1);
+            add_IRQ(1);
         } else if(timestamp >= last_poll + 10000) {
 
             last_poll = timestamp;

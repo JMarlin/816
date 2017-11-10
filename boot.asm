@@ -238,14 +238,12 @@ MAINL
       XBA
       LDA #PROMT&255
       JSR @PRNTS      ;print command prompt
-CONSL LDX cmd_count
-      CPX #$FF
-      BEQ DOPRS       ;If the command buffer is full, skip any further incoming chars
 CKCHR JSR @RDCHR      ;Get the next character from the incoming ring buffer
+      CMP #$00
       BEQ CKCHR       ;If the character was zero, try reading again
-DOPRS JSR @PARSE   
+      JSR @PARSE   
 SKPAD CLV
-      BVC CONSL
+      BVC CKCHR
 
 INTST     ;We should test to make sure our interrupt is actually coming from the debug port
       PHP ;Check to make sure it wasn't a BRK interrupt
