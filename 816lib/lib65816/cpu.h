@@ -93,9 +93,7 @@ extern dualw    X;  /* X Index Register          */
 extern dualw    Y;  /* Y Index Register          */
 extern byte     DB; /* Data Bank Register        */
 
-#ifndef CPU_DISPATCH
-
-extern union {      /* Program Counter       */
+typedef union {      /* Program Counter       */
 #ifdef WORDS_BIGENDIAN
     struct { byte Z,PB,H,L; } B;
     struct { word16 Z,PC; } W;
@@ -104,7 +102,11 @@ extern union {      /* Program Counter       */
     struct { word16 PC,Z; } W;
 #endif
     word32  A;
-} PC;
+} PC_union;
+
+#ifndef CPU_DISPATCH
+
+extern PC_union PC;
 
 #endif
 

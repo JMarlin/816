@@ -8,7 +8,7 @@
  * with bugs and utterly lacking in suitable features.
  */
 
-#include <lib65816/config.h>
+#include "lib65816/config.h"
 
 #ifdef DEBUG
 

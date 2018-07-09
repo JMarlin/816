@@ -10,7 +10,7 @@
  * Modified for greater portability and virtual hardware independence.
  */
 
-#include <lib65816/cpu.h>
+#include "lib65816/cpu.h"
 #include "cpumacro.h"
 #include "cpumicro.h"
 #include "cycles.h"
@@ -309,11 +309,11 @@ BEGIN_CPU_FUNC(opcode_0x27)
 	C_AND(opaddr);
 END_CPU_FUNC
 
+char tmpP;
 BEGIN_CPU_FUNC(opcode_0x28)
 #ifdef NATIVE_MODE
 	S_PULL(P);					/* PLP s */
 #else
-    byte tmpP;
     S_PULL(tmpP);
     P = (tmpP & ~0x30) | (P & 0x30);
 #endif

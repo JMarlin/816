@@ -12,7 +12,7 @@
 
 #define CPU_DISPATCH
 
-#include <lib65816/cpu.h>
+#include "lib65816/cpu.h"
 #include "cpumicro.h"
 
 dualw   A;  /* Accumulator               */
@@ -23,17 +23,7 @@ dualw   S;  /* Stack Pointer             */
 dualw   X;  /* X Index Register          */
 dualw   Y;  /* Y Index Register          */
 byte    DB; /* Data Bank Register        */
-
-union {
-#ifdef WORDS_BIGENDIAN
-    struct { byte Z,PB,H,L; } B;
-    struct { word16 Z,PC; } W;
-#else
-    struct { byte L,H,PB,Z; } B;
-    struct { word16 PC,Z; } W;
-#endif
-    word32  A;
-} PC;
+PC_union PC;
 
 duala       atmp,opaddr;
 dualw       wtmp,otmp,operand;

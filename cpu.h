@@ -95,7 +95,7 @@ extern byte     DB; /* Data Bank Register        */
 
 #ifndef CPU_DISPATCH
 
-extern union {      /* Program Counter       */
+typedef union {      /* Program Counter       */
 #ifdef WORDS_BIGENDIAN
     struct { byte Z,PB,H,L; } B;
     struct { word16 Z,PC; } W;
@@ -104,7 +104,9 @@ extern union {      /* Program Counter       */
     struct { word16 PC,Z; } W;
 #endif
     word32  A;
-} PC;
+} PC_union;
+
+extern PC_union PC;
 
 #endif
 
@@ -160,7 +162,7 @@ extern word32   cpu_cycle_count;
 
 #define E_WDM(v)        EMUL_handleWDM( (v), cpu_cycle_count )
 
-
+void CPUEvent_initialize( void );
 
 /* Set the 65816 emulator's update period (the number of cycles
  * elapsed between calls to the E_UPDATE routine.)
