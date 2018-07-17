@@ -36,40 +36,23 @@ START CLV       ;Clear overflow, disable emulation mode
       TCS
       JMP @MAINL ;go to the main application
 
-PROMT .asc "-->"
+PROMT .asc ")) "
       .byte $0
+LDMSG .asc "RDY"
+      .byte $0
+ERRMSG .asc "ERR"
+       .byte $0
+OKMSG  .asc "OK"
+       .byte $0
+ENDLN .byte $D, $0
 
-HLMSG .asc "Hello to you too!"
-      .byte $A, $D, $0
-LDMSG .asc "Ready for data"
-      .byte $0
-EXMSG .asc "Requested address: 0x"
-      .byte $0
-EQMSG .asc " = 0x"
-      .byte $0
-STMSG .asc "Storing to address: 0x"
-      .byte $0
-ASMSG .asc " <- 0x"
-      .byte $0
-SPFALMSG .asc "Expected a space following address."
-         .byte $0
-BPFALMSG .asc "Unable to parse input byte value."
-         .byte $0
-APFALMSG .asc "Unable to parse input address."
-         .byte $0
-ENDLN .byte $A, $D, $0
-
-#define command_count $04
-cmd_str_table .word hello_string
-              .word load_string
+#define command_count $03
+cmd_str_table .word load_string
               .word ex_string
               .word st_string
-cmd_ptr_table .word HLOCM
-              .word LODCM
+cmd_ptr_table .word LODCM
               .word EXACM
               .word STOCM
-hello_string  .asc "hello"
-              .byte $0
 load_string   .asc "load"
               .byte $0
 ex_string     .asc "x"
@@ -95,16 +78,6 @@ PRTOP LDA (str_base),Y
       INY     ;Cleverly, this should force us to also exit if and when Y wraps
       BVC PRTOP
 PRDN  PLY
-      RTS
-
-HLOCM PHA
-      PHX
-      LDA #HLMSG/256
-      XBA
-      LDA #HLMSG&255
-      JSR PRNTS
-      PLX
-      PLA
       RTS
 
 ;PRSHX - Parse byte from ASCII hex digit to 4-bit value
@@ -308,7 +281,7 @@ STOCM PHA
       STA str_base + 1
       LDA (str_base)
       CMP #$20         ;If it is not a space...
-      BNE SFALB        ;Exit failed
+      BNE SFALA        ;Exit failed
       PLA              ;Restore cmd pointer again
       XBA
       PLA
@@ -316,40 +289,14 @@ TSTBK LDX #$00
       LDY #$01
       JSR ADDW ;Consume the space
       JSR PRSBT ;And read the ensuing byte value
-      BCS SFALC ;If the byte parse failed, exit failed
-      TAX       ;Backup the byte to be written
-      LDA #STMSG/256 ;Print beginning of string
-      XBA
-      LDA #STMSG&255
-      JSR PRNTS
-      LDA long_ptr + 2 ;Restore bank value
-      JSR PRTBT  ;Print the value
-      LDA long_ptr + 1 ;Restore hi byte
-      JSR PRTBT  ;Print
-      LDA long_ptr ;Restore lo byte
-      JSR PRTBT  ;Print
-      LDA #ASMSG/256 ;Print ' <- '
-      XBA 
-      LDA #ASMSG&255
-      JSR PRNTS
-      TXA            ;Restore byte to write
+      BCS SFALB ;If the byte parse failed, exit failed
       STA [long_ptr] ;Store value to 24-bit address
-      JSR PRTBT      ;Print the written value
-      BRA STEND  ;Exit success
-SFALA LDA #APFALMSG/256 ;Print failure message
-      XBA 
-      LDA #APFALMSG&255
-      JSR PRNTS
+      CLC        ;Exit success
       BRA STEND
-SFALB LDA #SPFALMSG/256
-      XBA 
-      LDA #SPFALMSG&255
-      BRA STEND
-SFALC LDA #BPFALMSG/256
-      XBA 
-      LDA #BPFALMSG&255
-STEND JSR PNTLN
-      PLY
+SFALA PLA ;Dump backed-up string address
+      PLA 
+SFALB SEC ;Exit fail
+STEND PLY
       PLX
       PLA
       XBA
@@ -370,36 +317,17 @@ EXACM PHA
       JSR ADDW ;Consume the first two characters
       JSR PRSAD ;Parse the address
       BCS EXFAL ;If the conversion failed, jump to fail message
-      PHA       ;Otherwise, backup the calcuated values
-      XBA
-      PHA
-      PHX
-      LDA #EXMSG/256
-      XBA
-      LDA #EXMSG&255
-      JSR PRNTS
-      PLA        ;Restore bank value
-      STA long_ptr + 2
-      JSR PRTBT  ;Print the value
-      PLA        ;Restore hi byte
-      STA long_ptr + 1
-      JSR PRTBT  ;Print
-      PLA        ;Restore lo byte
+      STX long_ptr + 2
       STA long_ptr
-      JSR PRTBT  ;Print
-      LDA #EQMSG/256 ;Print ' = '
-      XBA 
-      LDA #EQMSG&255
-      JSR PRNTS
+      XBA
+      STA long_ptr + 1
       LDA [long_ptr] ;Load value from 24-bit address
       JSR PRTBT      ;Print the peeked value
+      JSR PNTLN
+      CLC
       BRA EXEND  ;Exit success
-EXFAL LDA #APFALMSG/256 ;Print failure message
-      XBA 
-      LDA #APFALMSG&255
-      JSR PRNTS
-EXEND JSR PNTLN
-      PLY
+EXFAL SEC
+EXEND PLY
       PLX
       PLA
       XBA
@@ -423,11 +351,9 @@ GBYTE INX
       LDA #$2E
       JSR @OUTCH
       BRA GBYTE
-LODDN LDA #$0A
-      JSR @OUTCH
-      LDA #$0D
-      JSR @OUTCH
+LODDN JSR PNTLN
       JSR @$001000
+      CLC
       PLX
       PLA
       RTS
@@ -495,7 +421,7 @@ CHECK PHA
 CMPLP
       LDY cmd_count
       CPY #command_count*2
-      BEQ PRPMT
+      BEQ RESER
       LDA cmd_str_table,Y
       XBA
       INY
@@ -513,7 +439,17 @@ CMPLP
       XBA
       LDA #cmd_buffer&256
       JSR (cmd_ptr_table,X)
-PRPMT LDA #PROMT/256
+      BCC RESOK
+RESER LDA #ERRMSG/256
+      XBA
+      LDA #ERRMSG&255
+      BRA PRPMT
+RESOK LDA #OKMSG/256
+      XBA
+      LDA #OKMSG&255
+PRPMT JSR PRNTS
+      JSR PNTLN
+      LDA #PROMT/256
       XBA
       LDA #PROMT&255
       JSR PRNTS
@@ -526,9 +462,9 @@ PRSDN PLY
       RTL
 
 MAINL
-      LDA #$AA
-      STA out_buf
-      STA out_reg     ;Set display
+      ;LDA #$AA
+      ;STA out_buf
+      ;STA out_reg     ;Set display
       LDA #$00
       STA out_count   ;init output buffer
       STA cmd_count
