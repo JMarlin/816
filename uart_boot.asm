@@ -21,10 +21,10 @@
 #define temp_ptr $13
 #define long_ptr $15
 #define cmd_buffer $0400
-#define in_reg $4000
-#define out_reg $FFFF
-#define clock_pin_mask $01
-#define din_pin_mask $02
+#define in_reg $7FFC   ;--double check that these are the right way around
+#define out_reg $7FFD
+#define mrak_mask $01
+#define mdat_mask $02
 #define dout_pin_mask $01
 
 START CLV       ;Clear overflow, disable emulation mode
@@ -486,11 +486,40 @@ CKCHR JSR @RDCHR      ;Get the next character from the incoming ring buffer
       JSR @PARSE   
 SKPAD BRA CKCHR
 
+IRQH
+      LDA in_reg ;Make sure that the input isn't spurious
+      AND #mrak_mask
+      BEQ IOVR   ;Die if the input isn't actually high
+      LDA #$7F
+DLMR  DEC        ;Delay 128 times to ensure MRAK stays high
+      BEQ CHK2
+      BRA DLMR
+CHK2  LDA in_reg ;Check it again
+      PHA
+      AND #mrak_mask
+      BEQ IOVR   ;And die if it went low since the beginning of the delay
+      ASL $shift_reg  ;Shift the value accumulator (TODO - define this address)
+      PLA 
+      AND #mdat_mask ;Get the sampled MDAT value
+      BEQ NOBT       ;Skip setting the low bit
+      INC $shift_reg ;Set the low bit
+NOBT  STA 
+      LDA #mrak_mask ;Raise CRAK handshake signal to indicate that we've finisehd sampling the bit
+      STA out_reg
+WTMR  LDA in_reg     ;Wait for MRAK to go low, indicating that the other device acknowledged our handshake
+      AND #mrak_mask 
+      BEQ MRLO
+      BRA WTMR
+MRLO  LDA #$00       ;Handshaking complete, lower our CRAk
+      ;TODO -- increase bit count, if ==8 then store in input buffer area and reset bit count
+IOVR
+      RTI
+
 CDEND
 
 .dsb $FFEC - *,$00
 .word PRNTS
-.word 0     ;FFEE,EF
+.word IRQH  ;FFEE,EF -- IRQB vector
 .word 0     ;FFF0,F1
 .word 0     ;FFF2,F3
 .word 0     ;FFF4,F5
