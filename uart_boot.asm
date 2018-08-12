@@ -9,7 +9,7 @@
 #define txt_buffer $0200
 #define incoming_ch $06
 #define cmd_count $07
-#define str_base $08
+#define lcl_ptr $08
 #define cmp_base $0A
 #define temp_addr $0C
 #define inbuf_count $0E
@@ -20,6 +20,7 @@
 #define temp_reg $12
 #define temp_ptr $13
 #define long_ptr $15
+#define asm_base_lptr $18
 #define cmd_buffer $0400
 #define in_reg $7FFC   ;--double check that these are the right way around
 #define out_reg $7FFD
@@ -36,6 +37,9 @@ START CLV       ;Clear overflow, disable emulation mode
       TCS
       JMP @MAINL ;go to the main application
 
+;This is the location that the built-in assembler will default to assembling in
+asm_init_base .byte $00, $05, $00
+
 PROMT .asc ")) "
       .byte $0
 LDMSG .asc "RDY"
@@ -46,19 +50,24 @@ OKMSG  .asc "OK"
        .byte $0
 ENDLN .byte $D, $0
 
-#define command_count $03
+#define command_count $04
 cmd_str_table .word load_string
               .word ex_string
               .word st_string
+              .word ab_string
 cmd_ptr_table .word LODCM
               .word EXACM
               .word STOCM
+              .word ABSCM
 load_string   .asc "load"
               .byte $0
-ex_string     .asc "x"
+ex_string     .asc "exam"
               .byte $0
-st_string     .asc "s"
+st_string     .asc "stor"
               .byte $0
+ab_string     .asc "abase"
+              .byte $0
+
 int_str .asc "INTERRUPT"
         .byte $0A, $00
 
@@ -67,12 +76,12 @@ OUTCH
       RTL
 
 PRNTS PHY
-      STA str_base
+      STA lcl_ptr
       XBA
-      STA str_base + 1
+      STA lcl_ptr + 1
       LDY #$00
       CLV
-PRTOP LDA (str_base),Y 
+PRTOP LDA (lcl_ptr),Y 
       BEQ PRDN
       JSR @OUTCH
       INY     ;Cleverly, this should force us to also exit if and when Y wraps
@@ -105,82 +114,71 @@ PXEND CLC
       RTS
 
 ;PRSBT - Parse byte from ASCII string
-;Arguments | BA - 16-bit pointer to input string
-;Returns   | A = Parsed byte
+;Arguments | S+5\S+4 - 16-bit local pointer to input string
+;Returns   | S+3 = Parsed byte, output
 ;          | Carry = set if parsing failed
-PRSBT PHX 
-      PHY
-      STA str_base     ;Store the base address of the string
-      XBA
-      STA str_base + 1
-      LDA (str_base)   ;Load the first byte from that address
-      JSR PRSHX        ;Convert hex nybble to value
+PRSBT PHY              ;(S is now +1)
+      PHA              ;(S is now +2)
+      LDA ($6,S)       ;Load the first byte from arg pointer (6 - 2 = 4)
+      JSR PRSHX        ;Convert hex nybble to value (result in A)
       BCS PBEND        ;If conversion failed, exit
-      ASL ;Shift to high-order nybble
+      ASL              ;Shift result into high-order nybble
       ASL
       ASL
       ASL
-      STA temp_reg     ;Back up value
+      STA $5,S         ;Store in stack output arg (5 - 2 = 3)
       LDY #$01         ;Use Y to index next character
-      LDA (str_base),Y 
+      LDA ($6,S),Y     ;(6 - 2 = 4)
       JSR PRSHX        ;Convert hex nybble to value
       BCS PBEND        ;If conversion failed, exit
       AND #$0F         ;Make sure top nybble is cleared
-      ORA temp_reg     ;Insert top nybble
+      ORA $5,S         ;Insert previously calculated top nybble (5 - 2 = 3)
+      STA $5,S         ;Write final value back to stack output arg (5 - 2 = 3)
       CLC              ;Make sure we don't flag a failure
-PBEND PLY
-      PLX
+PBEND PLA
+      PLY
       RTS
 
 ;PRSAD - Parse 24-bit Address from ASCII string
-;Arguments | BA = 16-bit pointer to input string
-;Returns   | X = Parsed address bank
-;          | B = Parsed address hi
-;          | A = Parsed address lo
+;Arguments | S+7\S+6 = 16-bit local pointer to input string
+;Returns   | S+5\S+4\S+3 = 24-bit parsed address from string, out
 ;          | Carry = set if parsing failed
-PRSAD PHY
-      STA temp_ptr
-      XBA
-      STA temp_ptr + 1
-      XBA
+PRSAD PHA       ;Backup register to be clobbered (S is now +1)
+      LDA $8,S  ;Push pointer to character to parse onto stack (8 - 1 = 7)
+      PHA       ;(S is now +2)
+      LDA $8,S  ;(8 - 2 = 6)
+      PHA       ;(S is now +3)
+      PHA       ;Make space on stack for output value (S is now +4)
       JSR PRSBT ;Parse first two characters for bank
-      BCS PAEND ;If carry was set, exit fail
-      PHA       ;Backup bank value
-      LDA temp_ptr + 1
-      XBA
-      LDA temp_ptr
-      CLC       ;Increment string pointer to next byte
-      ADC #$02
-      XBA
-      ADC #$00
-      XBA      
-      STA temp_ptr
-      XBA
-      STA temp_ptr + 1
-      XBA
-      JSR PRSBT ;Parse second byte
-      BCS PAFLB ;Exit on fail
-      PHA       ;Backup hi byte value
-      LDA temp_ptr + 1
-      XBA
-      LDA temp_ptr
-      CLC       ;Increment string pointer to next byte
-      ADC #$02
-      XBA
-      ADC #$00
-      XBA      
-      JSR PRSBT ;Parse third byte
-      BCS PAFLA ;Exit on fail
-      TAY       ;Backup lo byte value
-      PLA       ;Restore hi byte value
-      XBA       ;Stash in B
-      PLA       ;Restore bank value  
-      TAX       ;Stash in X
-      TYA       ;Put lo byte value back in A
-      BRA PAEND
-PAFLA PLA       ;Drop stashed value
-PAFLB PLA       ;Drop stashed value
-PAEND PLY
+      BCS PAEP4 ;If function failed, return fail
+      PLA       ;Stash value into output (S is now +3)
+      STA $8,S  ;(8 - 3 = 5)
+      LDA #$00  ;Push $0002 addend onto the stack
+      PHA       ;(S is now +4)
+      LDA #$02
+      PHA       ;(S is now +5)
+      JSR ADDW  ;Increment to the next two chars in the string (address is still on stack)
+      PLA       ;Drop half of input addend, leaving room for output value (S is now +4) 
+      JSR PRSBT ;Parse second byte 
+      BCS PAEP4 ;If function failed, return fail
+      PLA       ;Stash value into output (S is now +3)
+      STA $7,S  ;(7 - 3 = 4)
+      LDA #$00  ;Push $0002 addend onto the stack
+      PHA       ;(S is now +4)
+      LDA #$02
+      PHA       ;(S is now +5)
+      JSR ADDW  ;Increment to the next two chars in the string (address is still on stack)
+      PLA       ;Drop half of input addend, leaving room for output value (S is now +4) 
+      JSR PRSBT ;Parse third byte 
+      BCS PAEP4 ;If function failed, return fail
+      PLA       ;Stash value into output (S is now +3)
+      STA $6,S  ;(6 - 3 = 4)
+      CLC       ;Exit OK
+      BRA PAEP3
+PAEP4 PLA       
+PAEP3 PLA  
+      PLA     
+      PLA
       RTS
 
 ;NB2HX - Convert a nybble to ASCII hex digit
@@ -223,88 +221,112 @@ PNTLN PHA
       PLA
       RTS
 
-;AddWord - adds XY into AB
-;Args - XY = Value to be added
-;     - AB = Value to be added to, output
-ADDW PHX
-     PHY
-     CLC
-     ADC $1,S
-     XBA
-     ADC $2,S
-     XBA
-     PLY
-     PLX
+;AddWord - adds word on stack into AB
+;NOTE - We should really just go whole-hog with 16-bit mode, here, but whatever
+;Args - S+6/S+5 = Value to be added to, output
+;     - S+4/S+3 = Value to be added
+ADDW CLC
+     LDA $5,S
+     ADC $3,S
+     STA $5,S
+     LDA $6,S
+     ADC $4,S
+     STA $6,S
      RTS
 
-;Console command 's' - Store a byte to memory
-;Format - 's AAAAAA BB' where 'A' is a hex digit
+;AddLongaddress - Adds A to three-byte long address on stack
+ADDL PHA
+     CLC
+     ADC $4,S
+     STA $4,S
+     LDA #$00
+     ADC $5,S
+     STA $5,S
+     LDA #$00
+     ADC $6,S
+     STA $6,S
+     PLA
+     RTS
+
+;Console command 'stor' - Store a byte to memory
+;Format - 'stor AAAAAA BB' where 'A' is a hex digit
 ;         in a 24-bit address and 'B' is a hex digit
 ;         in a 8-bit value
-STOCM PHA
+STOCM PHA  ;Backup registers to be clobbered (S is +1)
       XBA
-      PHA
-      PHX
-      PHY
-      LDX #$00
-      LDY #$02
+      PHA  ;(S is +2)
+      PHX  ;(S is +3)
+      PHY  ;(S is +4)     
+      PHA  ;Push space for local vars (S is +5)
+      PHA  ;(S is +6)
+      PHA  ;(S is +7) 
+      PHA  ;Push command line ptr arg onto stack from A/B (S is +8)
+      XBA  
+      PHA  ;(S is +9)
+      LDX #$00 ;Push $0004 addend arg onto stack
+      PHX  ;(S is +10)
+      LDX #$04
+      PHX  ;(S is +11)
       XBA
-      JSR ADDW ;Consume the first two characters
-      PHA      ;Backup string address
-      XBA
-      PHA
-      XBA
-      JSR PRSAD ;Parse the address
-      BCS SFALA ;If the conversion failed, jump to fail message
-      PHA       ;Otherwise, backup the calcuated values
-      XBA
-      PHA
-      PHX
-      PLA 
-      STA long_ptr + 2
-      PLA 
-      STA long_ptr + 1
-      PLA
-      STA long_ptr
-      PLA      ;Restore the command string ptr
-      XBA
-      PLA
-      LDX #$00
-      LDY #$06
-      JSR ADDW ;Consume the address portion of the command string
-      PHA      ;Backup updated pointer
-      XBA
-      PHA 
-      XBA
-      STA str_base     ;Load next character
-      XBA
-      STA str_base + 1
-      LDA (str_base)
-      CMP #$20         ;If it is not a space...
-      BNE SFALA        ;Exit failed
-      PLA              ;Restore cmd pointer again
-      XBA
-      PLA
-TSTBK LDX #$00
-      LDY #$01
-      JSR ADDW ;Consume the space
-      JSR PRSBT ;And read the ensuing byte value
-      BCS SFALB ;If the byte parse failed, exit failed
-      STA [long_ptr] ;Store value to 24-bit address
-      CLC        ;Exit success
+      JSR ADDW  ;Consume the initial command name
+      PLX       ;Drop the addend argument from the stack, (S is +10)
+      PLX       ;leaving the updated pointer (S is +9)
+      JSR SKPWH ;Fast-forward past any whitespace characters
+      PHX       ;Push room for parsed address retval (S is +10)
+      PHX       ;(S is +11)
+      PHX       ;(S is +12)
+      JSR PRSAD ;Parse the address text at the pointer
+      BCS STEP5 ;If the conversion failed, jump to fail message
+      PLA       ;Otherwise, stash output value into local var area (S is +11)
+      STA 5,S   ;(11 - 5  = 2nd private byte + 4regs = 6)
+      PLA       ;(S is +10)
+      STA 5,S   ;(10 - 5 = 1st private byte + 4regs = 5)
+      PLA       ;(S is +9)
+      STA 5,S   ;(9 - 5 = 0th private byte + 4regs = 4)
+      LDX #$00  ;Push $0006 addend arg onto stack
+      PHX       ;(S is +10)
+      LDX #$06
+      PHX       ;(S is +11)
+      JSR ADDW  ;Consume the address portion of the command string
+      PLX       ;Drop the addend arg (S is +10)
+      PLX       ;(S is +9)
+      JSR SKPWH ;Fast-forward to next non-whitespace char
+      LDA (1,S) ;Get the value at the fast-forwarded ptr location
+      BEQ STEP2 ;If we hit the end of the string (zero), exit failed
+      PHA       ;Make space for parse output on the stack (S is +10)
+tstbk JSR PRSBT ;And read the ensuing byte value
+      PLA       ;Pull the parsed value (S is +9)
+      TAX
+      BCS STEP2 ;If the byte parse failed, exit failed
+      PHB       ;Back up the previous DBR (S is +10)
+      LDA 6,S   ;Load bank portion of address (10 - 6 = 0th private byte + 4 regs = 4)
+      PHA       ;Set new DBR value (S is +11)
+      PLB       ;(S is +10)
+      TXA
+      STA (4,S) ;Store value to 24-bit address (10 - 4 = 2nd private byte + 4 regs = 6)
+      PLB       ;Restore DBR (S is +9)
+      PLA       ;Drop string pointer (S is +8)
+      PLA       ;(S is +7)
+      CLC       ;Exit success
       BRA STEND
-SFALA PLA ;Dump backed-up string address
+STEP5 PLA ;Dump backed-up values
       PLA 
+      PLA 
+STEP2 PLA
+      PLA
 SFALB SEC ;Exit fail
-STEND PLY
+STEND PLA ;Dump local variable space
+      PLA
+      PLA
+      PLY ;Restore regs
       PLX
       PLA
       XBA
       PLA
       RTS
 
-;Console command 'x' - eXamine a byte of memory
-;Format - 'x AAAAAA' where 'A' is a hex digit in a 
+;Console command 'exam' - eXamine a byte of memory
+;Format - 'exam AAAAAA' where 'A' is a hex digit in a 
 ;         24-bit address
 EXACM PHA
       XBA
@@ -312,9 +334,13 @@ EXACM PHA
       PHX
       PHY
       LDX #$00
-      LDY #$02
+      PHX
+      LDX #$05
+      PHX
       XBA
-      JSR ADDW ;Consume the first two characters
+      JSR ADDW ;Consume the first five characters
+      PLX
+      PLX
       JSR PRSAD ;Parse the address
       BCS EXFAL ;If the conversion failed, jump to fail message
       STX long_ptr + 2
@@ -328,6 +354,70 @@ EXACM PHA
       BRA EXEND  ;Exit success
 EXFAL SEC
 EXEND PLY
+      PLX
+      PLA
+      XBA
+      PLA
+      RTS
+
+;Advance the local pointer on the stack until it no longer
+;points to a whitespace character
+;Args = S+4/S+3 - Pointer to be modified
+SKPWH PHA      ;Back up previous A value (S is now +1)
+SWTOP LDA ($4,S) ;Check byte value at pointer (4 - 1 = 3)
+      BEQ SWEXI  ;Zero/end-of-string is a special exit case
+      CMP #$21   ;If it's >= 0x21, non whitespace
+      BCS SWEXI  ;So we can also exit (BCS = BGE)
+      LDA $5,S   ;Get our argument and push it onto the stack for ADDW (5 - 1 = 4)
+      PHA        ;(S is now +2)
+      LDA $5,S   ;(5 - 2 = 3)
+      PHA        ;(S is now +3)
+      LDA #$00   ;Push $0001 addend
+      PHA        ;(S is now +4)
+      LDA #$01   
+      PHA        ;(S is now +5)
+      JSR ADDW   ;And add the pointer value we pushed to it
+      PLA        ;Clear the addend argument, leaving the result (S is now +4)
+      PLA        ;(S is now +3)
+      PLA        ;Put the updated value back into our args area (S is now +2)
+      STA $5,S   ;(5 - 2 = 3)
+      PLA        ;(S is now +1)
+      STA $5,S   ;(5 - 1 = 4)
+      BRA SWTOP
+SWEXI PLA        ;Restore original A value
+      RTS
+
+;Console command 'abase' - Get/set Assembler BASE address
+;Format - 'abase [AAAAAA]' where 'A' is a hex digit in a 
+;         24-bit address
+ABSCM PHA      ;Back up registers that will be clobbered
+      XBA
+      PHA
+      XBA
+      PHX
+      PHY
+      LDX #$00 ;Push 0x0005 arg
+      PHX
+      LDX #$05
+      PHX
+      XBA
+      JSR ADDW ;Consume the first five characters
+      JSR SKPWH ;And pass the altered address to be fast-forwarded past whitespace
+      LDA ($1,S) ;Load the value at the updated pointer
+      BEQ ABDSP ;If we hit the end of the string, there were no args, so just display
+      
+      JSR PRSAD ;Parse the address
+      BCS ABFAL ;If the conversion failed, jump to fail message
+      STX long_ptr + 2
+      STA long_ptr
+      XBA
+      STA long_ptr + 1
+      LDA [long_ptr] ;Load value from 24-bit address
+      JSR PRTBT      ;Print the peeked value
+      ;HERE/TODO
+ABDSP
+ABFAL SEC ;Carry flag indicates failure
+ABDN  PLY
       PLX
       PLA
       XBA
@@ -359,15 +449,15 @@ LODDN JSR PNTLN
       RTS
 
 STCMP PHY
-      STA str_base
+      STA lcl_ptr
       XBA
-      STA str_base + 1
+      STA lcl_ptr + 1
       STY cmp_base
       STX cmp_base + 1
       LDY #$00
       CLV
       SEC
-SCTOP LDA (str_base),Y
+SCTOP LDA (lcl_ptr),Y
       CMP (cmp_base),Y
       BNE CBLK ;If they don't match, double-check for end-of-string vs space
       CMP #$00
@@ -462,14 +552,16 @@ PRSDN PLY
       RTL
 
 MAINL
-      ;LDA #$AA
-      ;STA out_buf
-      ;STA out_reg     ;Set display
       LDA #$00
       STA out_count   ;init output buffer
       STA cmd_count
       STA inbuf_count
       STA inbuf_ptr
+      LDX #$03        ;Init assembler base pointer
+NXTAB DEX
+      LDA asm_init_base,X
+      CPX #$00
+      BNE NXTAB
       PHP             ;Clear IRQ Disable bit
       PLA
       AND #$FB
@@ -478,7 +570,7 @@ MAINL
       LDA #PROMT/256
       XBA
       LDA #PROMT&255
-      JSR PRNTS      ;print command prompt
+      JSR PRNTS       ;print command prompt
 CKCHR JSR @RDCHR      ;Get the next character from the incoming ring buffer
       CMP #$00
       BEQ CKCHR       ;If the character was zero, try reading again
@@ -487,32 +579,32 @@ CKCHR JSR @RDCHR      ;Get the next character from the incoming ring buffer
 SKPAD BRA CKCHR
 
 IRQH
-      LDA in_reg ;Make sure that the input isn't spurious
-      AND #mrak_mask
-      BEQ IOVR   ;Die if the input isn't actually high
-      LDA #$7F
-DLMR  DEC        ;Delay 128 times to ensure MRAK stays high
-      BEQ CHK2
-      BRA DLMR
-CHK2  LDA in_reg ;Check it again
-      PHA
-      AND #mrak_mask
-      BEQ IOVR   ;And die if it went low since the beginning of the delay
-      ASL $shift_reg  ;Shift the value accumulator (TODO - define this address)
-      PLA 
-      AND #mdat_mask ;Get the sampled MDAT value
-      BEQ NOBT       ;Skip setting the low bit
-      INC $shift_reg ;Set the low bit
-NOBT  STA 
-      LDA #mrak_mask ;Raise CRAK handshake signal to indicate that we've finisehd sampling the bit
-      STA out_reg
-WTMR  LDA in_reg     ;Wait for MRAK to go low, indicating that the other device acknowledged our handshake
-      AND #mrak_mask 
-      BEQ MRLO
-      BRA WTMR
-MRLO  LDA #$00       ;Handshaking complete, lower our CRAk
-      ;TODO -- increase bit count, if ==8 then store in input buffer area and reset bit count
-IOVR
+;      LDA in_reg ;Make sure that the input isn't spurious
+;      AND #mrak_mask
+;      BEQ IOVR   ;Die if the input isn't actually high
+;      LDA #$7F
+;DLMR  DEC        ;Delay 128 times to ensure MRAK stays high
+;      BEQ CHK2
+;      BRA DLMR
+;CHK2  LDA in_reg ;Check it again
+;      PHA
+;      AND #mrak_mask
+;      BEQ IOVR   ;And die if it went low since the beginning of the delay
+;      ASL $shift_reg  ;Shift the value accumulator (TODO - define this address)
+;      PLA 
+;      AND #mdat_mask ;Get the sampled MDAT value
+;      BEQ NOBT       ;Skip setting the low bit
+;      INC $shift_reg ;Set the low bit
+;NOBT  STA 
+;      LDA #mrak_mask ;Raise CRAK handshake signal to indicate that we've finisehd sampling the bit
+;      STA out_reg
+;WTMR  LDA in_reg     ;Wait for MRAK to go low, indicating that the other device acknowledged our handshake
+;      AND #mrak_mask 
+;      BEQ MRLO
+;      BRA WTMR
+;MRLO  LDA #$00       ;Handshaking complete, lower our CRAk
+;      ;TODO -- increase bit count, if ==8 then store in input buffer area and reset bit count
+;IOVR
       RTI
 
 CDEND

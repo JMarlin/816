@@ -38,6 +38,7 @@ word32 last_poll = 0;
 int debugger_is_on = 0;
 int debugger_is_enabled = 0;
 int interrupts_enabled = 1;
+int step_over_addr = 0xFFFFFFFF;
 
 void (*on_spi_complete)(void) = 0;
 
@@ -134,7 +135,7 @@ int breakpoint_check(int address, int mode) {
     int found_index = -1;
     int i;
 
-    if(mode == 2) { //Mode 2 == get entry count 
+    if(mode == BP_MODE_COUNT) { //Mode 2 == get entry count 
         
         return (int)bp_count;
     }
@@ -142,7 +143,7 @@ int breakpoint_check(int address, int mode) {
     if(address > 0xFFFFFF || address < 0)
         return -1; //Bad address 
 
-    if(mode == 3) { //Mode 3 == get entry at index  
+    if(mode == BP_MODE_GET) { //Mode 3 == get entry at index  
 
         if(address >= bp_count)
             return 0; //Address not found
@@ -150,7 +151,7 @@ int breakpoint_check(int address, int mode) {
         return (int)bp_entry[address];
     }
 
-    if(mode == 4) {
+    if(mode == BP_MODE_CLEAR_ALL) {
 
         bp_count = 0;
 
@@ -167,13 +168,13 @@ int breakpoint_check(int address, int mode) {
             break;
         }
 
-    if(found_index == -1 && mode == 1) { //mode 1 == insert breakpoint
+    if(found_index == -1 && mode == BP_MODE_INSERT) { //mode 1 == insert breakpoint
 
         bp_entry = (int*)realloc((void*)bp_entry, sizeof(int) * (bp_count + 1));
         bp_entry[bp_count++] = address;
     }
 
-    if(found_index != -1 && mode == -1) { //mode -1 == delete breakpoint
+    if(found_index != -1 && mode == BP_MODE_REMOVE) { //mode -1 == delete breakpoint
 
         for(i = found_index; i < bp_count - 1; i++)
             bp_entry[found_index] = bp_entry[found_index + 1];
@@ -231,7 +232,8 @@ int debug_command_break(int argc, char* argv[]) {
                 fflush(stdout);
                 break;
             default:
-                printf("Breakpoint already exists\n");
+                breakpoint_check(address, BP_MODE_REMOVE);
+                printf("Breakpoint at %06X removed\n");
                 fflush(stdout);
                 break;
         }
@@ -446,7 +448,7 @@ int parse_debug_command(char* command_buffer) {
         "toggleint",
 		"exit",
 		"key",
-		"send"
+        "send"
     };
     DebugCommandFunction command_function[COMMAND_COUNT] = {
         debug_command_step,
@@ -457,7 +459,7 @@ int parse_debug_command(char* command_buffer) {
         debug_command_toggleint,
 		debug_command_exit,
 		debug_command_key,
-		debug_command_send
+        debug_command_send
     };
 
     int argc;
