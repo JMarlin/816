@@ -1,15 +1,16 @@
 extern "C" {
-    #include "cpu.h"
-    #include <time.h>
-    #include <stdio.h>
-    #include <stdlib.h>
-    #include <fcntl.h>
-    #include <termios.h>
-    #include <string.h>
-    #include <unistd.h>
-    #include <string.h>
-    #include <signal.h>
+	#include "cpu.h"
 }
+
+#include <time.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <fcntl.h>
+#include <string.h>
+#include <string.h>
+#include <signal.h>
+#include <conio.h>
+#include "system_controller_cpld.h"
 
 #define RAM_SIZE  16*1024
 #define ROM_SIZE  32*1024
@@ -20,12 +21,17 @@ extern "C" {
 #define DBG_CMD_PROCEED 1
 #define DBG_CMD_REMAIN 2
 
-struct termios oldit, newit, oldot, newot;
+//struct termios oldit, newit, oldot, newot;
 unsigned char* REN_rombuf;
 unsigned char* REN_rambuf;
+unsigned char* send_file_data = (unsigned char*)0;
 int romsize;
-byte input_register;
+int send_file_size = 0;
+int send_file_index = 0;
+byte input_register = 0;
 byte output_register;
+byte uart_register = 0;
+byte sending_file = 0;
 byte test_value = 0;
 int tx_requested = 0;
 byte spi_in = 0;
@@ -36,16 +42,29 @@ word32 last_poll = 0;
 int debugger_is_on = 0;
 int debugger_is_enabled = 0;
 int interrupts_enabled = 1;
+int step_over_addr = 0xFFFFFFFF;
+SystemControllerCPLD* system_controller;
 
 void (*on_spi_complete)(void) = 0;
+
+byte romcode[256] = {
+ 0xA9, 0x00, 0x85, 0xFD, 0xB8, 0xA9, 0xFF, 0x85,
+ 0xFE, 0xA9, 0xFF, 0x85, 0xFF, 0xEA, 0xEA, 0xEA,
+ 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xC6,
+ 0xFF, 0xD0, 0xF2, 0xC6, 0xFE, 0xD0, 0xEA, 0xA5,
+ 0xFD, 0xD0, 0x08, 0xA9, 0xFF, 0x85, 0xFD, 0x18,
+ 0xFB, 0x50, 0xDA, 0xA9, 0x00, 0x85, 0xFD, 0x38,
+ 0xFB, 0x50, 0xD2
+};
+
 
 void EMUL_handleWDM(byte opcode, word32 timestamp) {
 
     return;
 }
 
-int kbhit();
-int getch();
+//int kbhit();
+//int getch();
 void spi_print();
 
 void add_IRQ(unsigned int mask) {
@@ -61,11 +80,11 @@ int read_line(char* buffer, unsigned int buf_size) {
 
     while(1) {
     
-        while(!kbhit());
+        //while(!kbhit());
 
-        temp_char = getch() & 0xFF;
+        temp_char = getchar() & 0xFF;
         buffer[char_count] = temp_char;
-        printf("%c", temp_char); fflush(stdout);
+        //printf("%c", temp_char); fflush(stdout);
 
         if(temp_char == '\n')
             break;
@@ -121,7 +140,7 @@ int breakpoint_check(int address, int mode) {
     int found_index = -1;
     int i;
 
-    if(mode == 2) { //Mode 2 == get entry count 
+    if(mode == BP_MODE_COUNT) { //Mode 2 == get entry count 
         
         return (int)bp_count;
     }
@@ -129,7 +148,7 @@ int breakpoint_check(int address, int mode) {
     if(address > 0xFFFFFF || address < 0)
         return -1; //Bad address 
 
-    if(mode == 3) { //Mode 3 == get entry at index  
+    if(mode == BP_MODE_GET) { //Mode 3 == get entry at index  
 
         if(address >= bp_count)
             return 0; //Address not found
@@ -137,7 +156,7 @@ int breakpoint_check(int address, int mode) {
         return (int)bp_entry[address];
     }
 
-    if(mode == 4) {
+    if(mode == BP_MODE_CLEAR_ALL) {
 
         bp_count = 0;
 
@@ -154,13 +173,13 @@ int breakpoint_check(int address, int mode) {
             break;
         }
 
-    if(found_index == -1 && mode == 1) { //mode 1 == insert breakpoint
+    if(found_index == -1 && mode == BP_MODE_INSERT) { //mode 1 == insert breakpoint
 
         bp_entry = (int*)realloc((void*)bp_entry, sizeof(int) * (bp_count + 1));
         bp_entry[bp_count++] = address;
     }
 
-    if(found_index != -1 && mode == -1) { //mode -1 == delete breakpoint
+    if(found_index != -1 && mode == BP_MODE_REMOVE) { //mode -1 == delete breakpoint
 
         for(i = found_index; i < bp_count - 1; i++)
             bp_entry[found_index] = bp_entry[found_index + 1];
@@ -218,7 +237,8 @@ int debug_command_break(int argc, char* argv[]) {
                 fflush(stdout);
                 break;
             default:
-                printf("Breakpoint already exists\n");
+                breakpoint_check(address, BP_MODE_REMOVE);
+                printf("Breakpoint at %06X removed\n");
                 fflush(stdout);
                 break;
         }
@@ -255,6 +275,68 @@ int debug_command_args(int argc, char* argv[]) {
     }
 
     return DBG_CMD_REMAIN;
+}
+
+int debug_command_exit(int argc, char* argv[]) {
+
+	CPU_quit();
+	return DBG_CMD_PROCEED;
+}
+
+int debug_command_key(int argc, char* argv[]) {
+
+	input_register = '!';
+	return DBG_CMD_REMAIN;
+}
+
+int debug_command_send(int argc, char* argv[]) {
+
+	FILE* send_file;
+	int read_size;
+
+	if(argc != 2) {
+		
+		printf("Usage: send <file to send>\n");
+		return DBG_CMD_REMAIN;
+	}
+
+	send_file = fopen(argv[1], "rb");
+
+    if(!send_file) {
+
+        printf("Couldn't find file '%s'.\n", argv[1]);
+        return DBG_CMD_REMAIN;
+    }
+
+    fseek(send_file, 0, SEEK_END);
+    send_file_size = ftell(send_file);
+    rewind(send_file);
+    send_file_data = (unsigned char*)malloc(send_file_size);
+
+    if(!send_file_data) {
+
+        printf("Couldn't allocate memory for file.\n");
+        fclose(send_file);
+        return DBG_CMD_REMAIN;
+    }
+
+    if((read_size = fread(send_file_data, 1, send_file_size, send_file)) != send_file_size) {
+    
+        printf("Couldn't read file, %i != %i.\n", send_file_size, read_size);
+        fclose(send_file);
+        free(send_file_data);
+		send_file_data = 0;
+        return DBG_CMD_REMAIN;
+    }
+
+    fclose(send_file);
+	send_file_index = 0;
+	sending_file = 1;
+	uart_register = 0x01;
+
+	printf("File %s loaded and queued.\n", argv[1]);
+
+	return DBG_CMD_REMAIN;
 }
 
 int debug_command_exam(int argc, char* argv[]) {
@@ -359,14 +441,19 @@ void free_argv_memory(int argc, char* argv[]) {
 
 int parse_debug_command(char* command_buffer) {
 
-#define COMMAND_COUNT 6
+	int i;
+
+#define COMMAND_COUNT 9
     char* command_entry[COMMAND_COUNT] = {
         "step",
         "run",
         "break",
         "args",
         "exam",
-        "toggleint"
+        "toggleint",
+		"exit",
+		"key",
+        "send"
     };
     DebugCommandFunction command_function[COMMAND_COUNT] = {
         debug_command_step,
@@ -374,7 +461,10 @@ int parse_debug_command(char* command_buffer) {
         debug_command_break,
         debug_command_args,
         debug_command_exam,
-        debug_command_toggleint
+        debug_command_toggleint,
+		debug_command_exit,
+		debug_command_key,
+        debug_command_send
     };
 
     int argc;
@@ -384,7 +474,6 @@ int parse_debug_command(char* command_buffer) {
     if(argc == 0)
         return 0;
 
-    int i;
     for(i = 0; i < COMMAND_COUNT; i++)
         if(!strcmp(command_entry[i], argv[0])) {
 
@@ -431,7 +520,7 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     static double timef = 0;
     static byte tx_buffer, rx_buffer;
     
-    struct timespec t;
+    //struct timespec t;
     double clocks_elapsed;
     double time_elapsed;
     static long old_nsecs, new_nsecs, nsec_diff;
@@ -444,9 +533,12 @@ void EMUL_hardwareUpdate(word32 timestamp) {
         debugger_is_on = 1;
     }
 
+	debugger_is_on = debugger_is_on || system_controller->Refresh(timestamp);
+
     if(debugger_is_on)
         do_debugger();
-    
+   
+
     //I want to do this based on time and not instruction count in the future
     //May even be possible to put this into a timer thread so that the interrupt
     //in the virtualized system is functionally mapped to an interrupt in the
@@ -460,23 +552,23 @@ void EMUL_hardwareUpdate(word32 timestamp) {
     //}
 
     //CPU emulation throttling
-    while(1) {
-    
-        clock_gettime(CLOCK_REALTIME, &t); 
-        new_nsecs = t.tv_nsec;
+    //while(1) {
+    //
+    //    clock_gettime(CLOCK_REALTIME, &t); 
+    //    new_nsecs = t.tv_nsec;
+    //
+    //    if(new_nsecs < old_nsecs)
+    //        nsec_diff = (new_nsecs + 1000000000) - old_nsecs;
+    //    else
+    //        nsec_diff = new_nsecs - old_nsecs;
+    //    
+    //    if(nsec_diff >= 200) {
+	//
+    //        break;
+    //    }
+    //}
 
-        if(new_nsecs < old_nsecs)
-            nsec_diff = (new_nsecs + 1000000000) - old_nsecs;
-        else
-            nsec_diff = new_nsecs - old_nsecs;
-        
-        if(nsec_diff >= 200) {
-
-            break;
-        }
-    }
-
-    old_nsecs = new_nsecs;
+    //old_nsecs = new_nsecs;
 /*
     clocks_elapsed = timestamp - old_timestamp;
     
@@ -489,128 +581,23 @@ void EMUL_hardwareUpdate(word32 timestamp) {
         old_timestamp = (double)timestamp;
     }
 */
-    if(oldE != E) {
-
-        int i;
-
-        if(!E) printf("[Emulation mode off]\n");
-            //for(i = 0; i < 256; i++)
-                //printf("%02X ", REN_rambuf[i]);
-
-        oldE = E;
-    }
-
-    if(tx_requested) {
-
-        if(last_time == 0) {
-
-            //Init new transfer
-            rx_buffer = 0;
-            tx_buffer = spi_out;
-            shifter = 0;
-            last_time = timestamp;
-            input_register = 0;
-            add_IRQ(1);
-        } else {
-
-            //Wait 100 cycles between steps
-            if(timestamp >= last_time + 100) {
-
-                last_time = timestamp;
-
-                if(input_register & 0x01) {
-
-                    //^clock was high last step
-                    //Get the current input value and then clock it low
-                    rx_buffer = (((output_register & 0x1) * 0x80) | ((rx_buffer >> 1 )& 0x7F));
-                    input_register = input_register & 0xFE;
-
-                    //Increase the clock count, check for cycle completion, write any received value
-                    shifter++;
-                    
-                    if(shifter == 8) {
-
-                        tx_requested = 0;
-                        spi_in = rx_buffer;
-
-                        //if(spi_out || spi_in)
-                        //    printf("[SPI: S-%02X R-%02X]\n", spi_out, spi_in);
-
-                        if(on_spi_complete)
-                            on_spi_complete();
-                    }
-                } else {
-
-                    //^clock was low last step
-                    //Clock it high and set the next data out value
-                    input_register = ((tx_buffer & 0x80) >> 6) | 0x01;
-                    tx_buffer = tx_buffer << 1;
-                }
-            }
-        }
-    } else {
-
-        if(kbhit()) {
-
-            //Queue a transfer (should have a helper function to do all of this)
-            last_poll = timestamp;
-            spi_out = (byte)(getch() & 0xFF);
-            tx_requested = 1;
-            on_spi_complete = spi_print;
-            last_time = 0;
-            add_IRQ(1);
-        } else if(timestamp >= last_poll + 10000) {
-
-            last_poll = timestamp;
-            spi_out = 0;
-            tx_requested = 1;
-            on_spi_complete = spi_print;
-            last_time = 0;
-        } 
-    }
 }
 
 byte MEM_readMem(word32 address, word32 timestamp, word32 emulFlags) {
 
     byte b = 0;
 
-    if(address & 0x8000)
-        b = REN_rombuf[address & 0x7FFF];
-    else if(address & 0x4000)
-        { b = input_register;  }
-    else
-        b = REN_rambuf[address & 0x3FFF];
+	system_controller->TryReadByte(address, timestamp, emulFlags, b);
 
     return b;
 }
 
 void MEM_writeMem(word32 address, byte b, word32 timestamp) {
 
-    if(address & 0x8000)
-        output_register = b; 
-    else if(!(address & 0x4000)) {
-        
-        if(address == 0x0000FF) {
-            //We'll set ACTUAL breakpoints after this
-            //debugger_is_on = debugger_is_on ? 0 : breakpoints_are_enabled;
-            //CPU_setTrace(debugger_is_on);
-        }
-
-        REN_rambuf[address & 0x3FFF] = b;
-/*
-        if(address >= 0x0200 && address < 0x0300) {
-
-            int i;
-            for(i = 0; i < 10; i++)
-                printf("%02X ", REN_rambuf[0x200 + i]);
-
-            printf("\n");
-        }
-        */
-    }
-
-    //Anything we try to write to 0x4000 - 0x7FFF should be dumped to space
+	system_controller->TryWriteByte(address, timestamp, b);
 }
+
+#ifndef _WIN32 
 
 int kbhit() {
     struct timeval tv = { 0L, 0L };
@@ -629,19 +616,21 @@ int getch() {
         return c;
 }
 
+#endif
+
 //TODO
 int input(char* inbuf, int bufsz) {
 
-    while(!getch());
+    getchar();
+	return 0;
 }
 
 void int_handler(int value) {
 
-    if(debugger_is_on) {
+    //if(debugger_is_on) {
 
-        system("reset");
-        exit(0);
-    }
+    //    exit(0);
+    //}
 
     debugger_is_on = 1;
 }
@@ -680,7 +669,7 @@ void spi_print(void) {
 
 int main(int argc, char* argv[]) {
 
-    //static struct termios oldit, newit, oldot, newot;
+    FILE* romfile;
 
     //Get args
     if(argc > 1) {
@@ -701,79 +690,11 @@ int main(int argc, char* argv[]) {
     CPUEvent_initialize();
     CPU_setUpdatePeriod(1);
 
-    //Set stdin to non-blocking
-    fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) | O_NONBLOCK);
-
-    //Turn off line-at-a-time
-    tcgetattr(STDIN_FILENO, &oldit);
-    newit = oldit;
-    newit.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &newit);
-
-    tcgetattr(STDOUT_FILENO, &oldot);
-    newot = oldot;
-    newot.c_lflag &= ~(ICANON);
-    tcsetattr(STDOUT_FILENO, TCSANOW, &newot);
-
-    FILE* romfile = fopen("boot.rom", "rb");
-
-    if(!romfile) {
-
-        printf("Couldn't find ROM image 'boot.rom'.\n");
-        return 0;
-    }
-
-    fseek(romfile, 0, SEEK_END);
-    romsize = ftell(romfile);
-    rewind(romfile);
-
-    if(romsize > ROM_SIZE) {
-
-        printf("System rom image size greater than 32k.\n");
-        fclose(romfile);
-        return 0;
-    }
-
-    REN_rombuf = (unsigned char*)malloc(ROM_SIZE);
-
-    if(!REN_rombuf) {
-
-        printf("Couldn't allocate ROM memory.\n");
-        fclose(romfile);
-        return 0;
-    }
-
-    if(fread(REN_rombuf, 1, romsize, romfile) != romsize) {
-    
-        printf("Couldn't read ROM image.\n");
-        fclose(romfile);
-        free(REN_rombuf);
-        return 0;
-    }
-
-    //fclose(romfile);
-    REN_rambuf = (unsigned char*)malloc(RAM_SIZE);
-
-    if(!REN_rambuf) {
-
-        printf("Couldn't allocate RAM memory.\n");
-        free(REN_rombuf);
-        return 0;
-    }
-
-    input_register = 0;
+	system_controller = new SystemControllerCPLD("boot.rom");
 
     printf("Starting execution\n");
     signal(SIGINT, int_handler);
     CPU_run();
-
-    fclose(romfile);
-
-    //Reset console mode
-    fcntl(0, F_SETFL, fcntl(0, F_GETFL, 0) & ~O_NONBLOCK);
-    oldit.c_lflag |= ICANON | ECHO;
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldit);
-    tcsetattr(STDOUT_FILENO, TCSANOW, &oldot);
  
     return 0;
 }

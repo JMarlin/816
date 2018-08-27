@@ -79,12 +79,26 @@
   <ItemGroup>
     <ClInclude Include="..\config.h" />
     <ClInclude Include="..\cpu.h" />
+    <ClInclude Include="..\device.h" />
+    <ClInclude Include="..\device_aggregator.h" />
+    <ClInclude Include="..\ram_device.h" />
+    <ClInclude Include="..\ResponseRange.h" />
+    <ClInclude Include="..\rom_device.h" />
+    <ClInclude Include="..\system_controller_cpld.h" />
+    <ClInclude Include="..\XR88C681.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="..\main.c" />
+    <ClCompile Include="..\device.cpp" />
+    <ClCompile Include="..\device_aggregator.cpp" />
+    <ClCompile Include="..\main.cpp" />
+    <ClCompile Include="..\ram_device.cpp" />
+    <ClCompile Include="..\ResponseRange.cpp" />
+    <ClCompile Include="..\rom_device.cpp" />
+    <ClCompile Include="..\system_controller_cpld.cpp" />
+    <ClCompile Include="..\XR88C681.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <Library Include="..\..\Visual Studio 2012\Projects\lib816\Release\lib816.lib" />
+    <Library Include="..\lib816.lib" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -22,8 +22,34 @@
 #define long_ptr $15
 #define asm_base_lptr $18
 #define cmd_buffer $0400
-#define in_reg $7FFC   ;--double check that these are the right way around
-#define out_reg $7FFD
+#define MRA $7FF0  ;R/W
+#define SRA $7FF1  ;R
+#define CSRA $7FF1 ;W
+#define MISR $7FF2 ;R
+#define CRA $7FF2  ;W
+#define RHRA $7FF3 ;R
+#define THRA $7FF3 ;W
+#define IPCR $7FF4 ;R
+#define ACR  $7FF4 ;W
+#define ISR  $7FF5 ;R
+#define IMR  $7FF5 ;W
+#define CTU  $7FF6 ;R/W
+#define CTL  $7FF7 ;R/W
+#define MRB  $7FF8 ;R/W
+#define SRB  $7FF9 ;R
+#define CSRB $7FF9 ;W
+#define CRB  $7FFA ;W
+#define RHRB $7FFB ;R
+#define THRB $7FFB ;W
+#define IVR  $7FFC ;R/W
+#define IP   $7FFD ;R
+#define OPCR $7FFD ;W
+#define SCC  $7FFE ;R
+#define SOPBC $7FFE ;W
+#define STC  $7FFF ;R
+#define COPBC $7FFF ;W
+#define SR_TXRDY $04
+#define SR_RXRDY $01
 #define mrak_mask $01
 #define mdat_mask $02
 #define dout_pin_mask $01
@@ -48,31 +74,57 @@ ERRMSG .asc "ERR"
        .byte $0
 OKMSG  .asc "OK"
        .byte $0
-ENDLN .byte $D, $0
+ENDLN .byte $A, $D, $0
 
 #define command_count $04
 cmd_str_table .word load_string
               .word ex_string
               .word st_string
-              .word ab_string
+              .word ad_string
 cmd_ptr_table .word LODCM
               .word EXACM
               .word STOCM
-              .word ABSCM
+              .word ADDRCM
 load_string   .asc "load"
               .byte $0
 ex_string     .asc "exam"
               .byte $0
 st_string     .asc "stor"
               .byte $0
-ab_string     .asc "abase"
+ad_string     .asc "addr"
               .byte $0
 
 int_str .asc "INTERRUPT"
         .byte $0A, $00
 
+INITUART
+      PHA  ;Back up A
+      LDA #$D0 
+      STA CRA  ;exit standby, if required
+      LDA #$20
+      STA CRA  ;Reset receiver (flush FIFO, disable RX)
+      LDA #$30
+      STA CRA  ;Reset transmitter (flush FIFO, disable TX)
+      LDA #$BB 
+      STA CSRA ;Set CSRA to 1011 1011 (9600/9600)
+      LDA #$10 
+      STA CRA  ;Send reset MSR command to CRA
+      LDA #$13 
+      STA MRA  ;Set MR1A to 00010011 (No parity, even parity, 8 bits per char)
+      LDA #$07 
+      STA MRA  ;Set MR2A (auto) to 0000 0111 (Normal channel mode, don't disable TX via CTS, stop bit length = 1.000)
+      LDA #$05 ;Send CRA command to enable TX and RX 
+      STA CRA
+      PLA  ;Restore A backup
+      RTS
+
 OUTCH 
-      STA $8000
+      PHA ;Backup character to write
+OCHLP LDA SRA ;Get current UART status
+      AND #SR_TXRDY ;Check to see if THRA is ready for a character
+      BEQ OCHLP ;Keep polling until TXRDY isn't zero
+      PLA ;Restore the character to write
+      STA THRA ;And put it in the output FIFO
       RTL
 
 PRNTS PHY
@@ -209,7 +261,7 @@ PRTBT PHA        ;Make a second copy for later
 
 ;Printline - Print a newline to the console
 ;Args - None
-PNTLN PHA
+PRTLN PHA
       XBA
       PHA
       LDA #ENDLN/256
@@ -278,7 +330,7 @@ STOCM PHA  ;Backup registers to be clobbered (S is +1)
       JSR PRSAD ;Parse the address text at the pointer
       BCS STEP5 ;If the conversion failed, jump to fail message
       PLA       ;Otherwise, stash output value into local var area (S is +11)
-      STA 5,S   ;(11 - 5  = 2nd private byte + 4regs = 6)
+tstbk STA 5,S   ;(11 - 5  = 2nd private byte + 4regs = 6)
       PLA       ;(S is +10)
       STA 5,S   ;(10 - 5 = 1st private byte + 4regs = 5)
       PLA       ;(S is +9)
@@ -294,7 +346,7 @@ STOCM PHA  ;Backup registers to be clobbered (S is +1)
       LDA (1,S) ;Get the value at the fast-forwarded ptr location
       BEQ STEP2 ;If we hit the end of the string (zero), exit failed
       PHA       ;Make space for parse output on the stack (S is +10)
-tstbk JSR PRSBT ;And read the ensuing byte value
+      JSR PRSBT ;And read the ensuing byte value
       PLA       ;Pull the parsed value (S is +9)
       TAX
       BCS STEP2 ;If the byte parse failed, exit failed
@@ -325,40 +377,92 @@ STEND PLA ;Dump local variable space
       PLA
       RTS
 
+;Console command 'addr' - set the current storage ADDRess
+;Format - 'addr AAAAAA' where 'A' is a hex digit in a 
+;         24-bit address
+ADDRCM 
+      PHA       ;Backup clobbered registers (S is +1)
+      XBA       
+      PHA       ;(S is +2)
+      PHX       ;(S is +3)
+      PHY       ;(S is +4)
+      PHA       ;Put B/A string pointer onto the stack (addw arg 1) (S is +5)
+      XBA       
+      PHA       ;(S is +6)
+      LDX #$00  ;Push 0x0004 addend (addw arg 2)
+      PHX       ;(S is +7)
+      LDX #$04
+      PHX       ;(S is +8)
+      JSR ADDW  ;Call ADDW to fast-forward past the 'addr' command chars
+      PLX       ;Drop the addend arg from the stack, (S is +7)
+      PLX       ;leaving the incremented address (S is +6)
+      JSR SKPWH ;Fast-forward past any whitespace characters
+      PHX       ;Push room for parsed address retval (S is +7)
+      PHX       ;(S is +8)
+      PHX       ;(S is +9)
+      JSR PRSAD ;Parse the address text at the pointer
+      BCS ADEP5 ;If the conversion failed, exit fail
+      PLA       ;Otherwise, stash output value into local var area (S is +8)
+      STA asm_base_lptr+2
+      PLA       ;(S is +7)
+      STA asm_base_lptr+1
+      PLA       ;(S is +6)
+      STA asm_base_lptr
+      PLA       ;Drop string pointer (S is +5)
+      PLA       ;(S is +4)
+      CLC
+      BRA ADEND  ;Exit success
+ADEP5 PLX        ;Dump unneeded stack values
+      PLX
+      PLX
+      PLX
+      PLX
+ADFAL SEC        ;Carry bit indicates command failure
+ADEND PLY        ;Restore caller register values
+      PLX
+      PLA
+      XBA
+      PLA
+      RTS        ;Return to caller 
+
+
 ;Console command 'exam' - eXamine a byte of memory
 ;Format - 'exam AAAAAA' where 'A' is a hex digit in a 
 ;         24-bit address
-EXACM PHA
-      XBA
-      PHA
-      PHX
-      PHY
-      LDX #$00
-      PHX
-      LDX #$05
-      PHX
-      XBA
-      JSR ADDW ;Consume the first five characters
-      PLX
-      PLX
-      JSR PRSAD ;Parse the address
-      BCS EXFAL ;If the conversion failed, jump to fail message
-      STX long_ptr + 2
-      STA long_ptr
-      XBA
-      STA long_ptr + 1
-      LDA [long_ptr] ;Load value from 24-bit address
-      JSR PRTBT      ;Print the peeked value
-      JSR PNTLN
+EXACM PHA       ;Backup clobbered registers (S is +1)
+      XBA       
+      PHA       ;(S is +2)
+      PHX       ;(S is +3)
+      PHY       ;(S is +4)
+      PHA       ;Put B/A string pointer onto the stack (addw arg 1) (S is +5)
+      XBA       
+      PHA       ;(S is +6)
+      LDX #$00  ;Push 0x0004 addend (addw arg 2)
+      PHX       ;(S is +7)
+      LDX #$04
+      PHX       ;(S is +8)
+      JSR ADDW  ;Call ADDW to fast-forward past the 'exam' command chars
+      PLX       ;Drop the addend arg from the stack, (S is +7)
+      PLX       ;leaving the incremented address (S is +6)
+      JSR SKPWH ;Fast-forward past any whitespace characters
+      LDA (1,S) ;Load current character
+      BNE EXEP2 ;If it's not a null char, die
+      LDA [asm_base_lptr] ;Get value at global address pointer
+      JSR PRTBT ;And print it
+      JSR PRTLN ;And a newline
+      PLA       ;Drop string pointer (S is +5)
+      PLA       ;(S is +4)
       CLC
       BRA EXEND  ;Exit success
-EXFAL SEC
-EXEND PLY
+EXEP2 PLX        ;Dump unneeded stack values
+      PLX
+EXFAL SEC        ;Carry bit indicates command failure
+EXEND PLY        ;Restore caller register values
       PLX
       PLA
       XBA
       PLA
-      RTS
+      RTS        ;Return to caller
 
 ;Advance the local pointer on the stack until it no longer
 ;points to a whitespace character
@@ -387,43 +491,6 @@ SWTOP LDA ($4,S) ;Check byte value at pointer (4 - 1 = 3)
 SWEXI PLA        ;Restore original A value
       RTS
 
-;Console command 'abase' - Get/set Assembler BASE address
-;Format - 'abase [AAAAAA]' where 'A' is a hex digit in a 
-;         24-bit address
-ABSCM PHA      ;Back up registers that will be clobbered
-      XBA
-      PHA
-      XBA
-      PHX
-      PHY
-      LDX #$00 ;Push 0x0005 arg
-      PHX
-      LDX #$05
-      PHX
-      XBA
-      JSR ADDW ;Consume the first five characters
-      JSR SKPWH ;And pass the altered address to be fast-forwarded past whitespace
-      LDA ($1,S) ;Load the value at the updated pointer
-      BEQ ABDSP ;If we hit the end of the string, there were no args, so just display
-      
-      JSR PRSAD ;Parse the address
-      BCS ABFAL ;If the conversion failed, jump to fail message
-      STX long_ptr + 2
-      STA long_ptr
-      XBA
-      STA long_ptr + 1
-      LDA [long_ptr] ;Load value from 24-bit address
-      JSR PRTBT      ;Print the peeked value
-      ;HERE/TODO
-ABDSP
-ABFAL SEC ;Carry flag indicates failure
-ABDN  PLY
-      PLX
-      PLA
-      XBA
-      PLA
-      RTS
-
 LODCM PHA
       PHX
       LDA #LDMSG/256
@@ -441,7 +508,7 @@ GBYTE INX
       LDA #$2E
       JSR @OUTCH
       BRA GBYTE
-LODDN JSR PNTLN
+LODDN JSR PRTLN
       JSR @$001000
       CLC
       PLX
@@ -483,10 +550,10 @@ SCDN  PLY
       RTL
 
 RDCHR
-      LDA $4001
-      AND #$01
+      LDA SRA
+      AND #SR_RXRDY
       BEQ RDCHR
-      LDA $4000
+      LDA RHRA
       RTL
 
 PARSE PHX
@@ -495,13 +562,22 @@ PARSE PHX
       CPX #$FF
       BEQ CHECK 
       CMP #$0A
-      BEQ CHECK 
+      BEQ CHECKPA
       CMP #$0D
-      BEQ CHECK
+      BEQ CHECKPD
       STA cmd_buffer,X
       INX 
       STX cmd_count
       BRA PRSDN
+CHECKPA PHA
+        LDA #$0D
+        JSR @OUTCH
+        PLA
+        BRA CHECK
+CHECKPD PHA
+        LDA #$0A
+        JSR @OUTCH
+        PLA
 CHECK PHA
       LDA #$00
       STA cmd_buffer,X ;We'll parse this some day
@@ -538,11 +614,8 @@ RESOK LDA #OKMSG/256
       XBA
       LDA #OKMSG&255
 PRPMT JSR PRNTS
-      JSR PNTLN
-      LDA #PROMT/256
-      XBA
-      LDA #PROMT&255
-      JSR PRNTS
+      JSR PRTLN
+      JSR PRTPMT
       LDY #$00
       STY cmd_buffer
       STY cmd_count
@@ -551,26 +624,44 @@ PRSDN PLY
       PLX
       RTL
 
+PRTPMT
+      PHA
+      XBA
+      PHA
+      LDA asm_base_lptr+2
+      JSR PRTBT
+      LDA asm_base_lptr+1
+      JSR PRTBT
+      LDA asm_base_lptr
+      JSR PRTBT
+      LDA #PROMT/256
+      XBA
+      LDA #PROMT&255
+      JSR PRNTS       ;print command prompt
+      PLA 
+      XBA
+      PLA
+      RTS
+
 MAINL
       LDA #$00
       STA out_count   ;init output buffer
       STA cmd_count
       STA inbuf_count
       STA inbuf_ptr
+      JSR INITUART    ;Init the UART
       LDX #$03        ;Init assembler base pointer
 NXTAB DEX
       LDA asm_init_base,X
+      STA asm_base_lptr,X
       CPX #$00
       BNE NXTAB
-      PHP             ;Clear IRQ Disable bit
-      PLA
-      AND #$FB
-      PHA
-      PLP
-      LDA #PROMT/256
-      XBA
-      LDA #PROMT&255
-      JSR PRNTS       ;print command prompt
+      ;PHP             ;Clear IRQ Disable bit
+      ;PLA             ;Disabled until we start playing with interrupt servicing on the DUART
+      ;AND #$FB
+      ;PHA
+      ;PLP
+      JSR PRTPMT
 CKCHR JSR @RDCHR      ;Get the next character from the incoming ring buffer
       CMP #$00
       BEQ CKCHR       ;If the character was zero, try reading again
