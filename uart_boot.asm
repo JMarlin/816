@@ -68,8 +68,6 @@ asm_init_base .byte $00, $05, $00
 
 PROMT .asc ")) "
       .byte $0
-LDMSG .asc "RDY"
-      .byte $0
 ERRMSG .asc "ERR"
        .byte $0
 OKMSG  .asc "OK"
@@ -77,15 +75,15 @@ OKMSG  .asc "OK"
 ENDLN .byte $A, $D, $0
 
 #define command_count $04
-cmd_str_table .word load_string
+cmd_str_table .word go_string
               .word ex_string
               .word st_string
               .word ad_string
-cmd_ptr_table .word LODCM
+cmd_ptr_table .word GOCM
               .word EXACM
               .word STOCM
               .word ADDRCM
-load_string   .asc "load"
+go_string   .asc "go"
               .byte $0
 ex_string     .asc "exam"
               .byte $0
@@ -301,81 +299,88 @@ ADDL PHA
      RTS
 
 ;Console command 'stor' - Store a byte to memory
-;Format - 'stor AAAAAA BB' where 'A' is a hex digit
-;         in a 24-bit address and 'B' is a hex digit
-;         in a 8-bit value
-STOCM PHA  ;Backup registers to be clobbered (S is +1)
-      XBA
-      PHA  ;(S is +2)
-      PHX  ;(S is +3)
-      PHY  ;(S is +4)     
-      PHA  ;Push space for local vars (S is +5)
-      PHA  ;(S is +6)
-      PHA  ;(S is +7) 
-      PHA  ;Push command line ptr arg onto stack from A/B (S is +8)
-      XBA  
-      PHA  ;(S is +9)
-      LDX #$00 ;Push $0004 addend arg onto stack
-      PHX  ;(S is +10)
+;Format - 'stor AA' store AA at current global pointer location
+STOCM PHA       ;Backup clobbered registers (S is +1)
+      XBA       
+      PHA       ;(S is +2)
+      PHX       ;(S is +3)
+      PHY       ;(S is +4)
+      PHA       ;Push space for local vars (S is +5)
+      PHA       ;Put B/A string pointer onto the stack (addw arg 1) (S is +6)
+      XBA       
+      PHA       ;(S is +7)
+      LDX #$00  ;Push 0x0004 addend (addw arg 2)
+      PHX       ;(S is +8)
       LDX #$04
-      PHX  ;(S is +11)
-      XBA
-      JSR ADDW  ;Consume the initial command name
-      PLX       ;Drop the addend argument from the stack, (S is +10)
-      PLX       ;leaving the updated pointer (S is +9)
+      PHX       ;(S is +9)
+      JSR ADDW  ;Call ADDW to fast-forward past the 'stor' command chars
+      PLX       ;Drop the addend arg from the stack, (S is +8)
+      PLX       ;leaving the incremented address (S is +7)
       JSR SKPWH ;Fast-forward past any whitespace characters
-      PHX       ;Push room for parsed address retval (S is +10)
-      PHX       ;(S is +11)
-      PHX       ;(S is +12)
-      JSR PRSAD ;Parse the address text at the pointer
-      BCS STEP5 ;If the conversion failed, jump to fail message
-      PLA       ;Otherwise, stash output value into local var area (S is +11)
-tstbk STA 5,S   ;(11 - 5  = 2nd private byte + 4regs = 6)
-      PLA       ;(S is +10)
-      STA 5,S   ;(10 - 5 = 1st private byte + 4regs = 5)
-      PLA       ;(S is +9)
-      STA 5,S   ;(9 - 5 = 0th private byte + 4regs = 4)
-      LDX #$00  ;Push $0006 addend arg onto stack
-      PHX       ;(S is +10)
-      LDX #$06
-      PHX       ;(S is +11)
-      JSR ADDW  ;Consume the address portion of the command string
-      PLX       ;Drop the addend arg (S is +10)
-      PLX       ;(S is +9)
-      JSR SKPWH ;Fast-forward to next non-whitespace char
-      LDA (1,S) ;Get the value at the fast-forwarded ptr location
-      BEQ STEP2 ;If we hit the end of the string (zero), exit failed
-      PHA       ;Make space for parse output on the stack (S is +10)
-      JSR PRSBT ;And read the ensuing byte value
-      PLA       ;Pull the parsed value (S is +9)
-      TAX
-      BCS STEP2 ;If the byte parse failed, exit failed
-      PHB       ;Back up the previous DBR (S is +10)
-      LDA 6,S   ;Load bank portion of address (10 - 6 = 0th private byte + 4 regs = 4)
-      PHA       ;Set new DBR value (S is +11)
-      PLB       ;(S is +10)
-      TXA
-      STA (4,S) ;Store value to 24-bit address (10 - 4 = 2nd private byte + 4 regs = 6)
-      PLB       ;Restore DBR (S is +9)
-      PLA       ;Drop string pointer (S is +8)
-      PLA       ;(S is +7)
-      CLC       ;Exit success
-      BRA STEND
-STEP5 PLA ;Dump backed-up values
-      PLA 
-      PLA 
-STEP2 PLA
-      PLA
-SFALB SEC ;Exit fail
-STEND PLA ;Dump local variable space
-      PLA
-      PLA
-      PLY ;Restore regs
+      LDA (1,S) ;Load current character
+      BEQ STEP2 ;If it's a null char, die
+      PHA       ;Push space for return byte (S is +8)
+      CLC
+      JSR PRSBT ;Get byte value
+      BCS STEP3 ;If failed, exit fail
+      PLA       ;Get parsed byte value (S is +7)
+      STA 3,S   ;Stash it into local variable space (7 - 3 = 4 = 0th local + 4 regs)
+      LDX #$00  ;Push 0x0002 addend (addw arg 2)
+      PHX       ;(S is +8)
+      LDX #$02
+      PHX       ;(S is +9)
+      JSR ADDW  ;Call ADDW to fast-forward past the parsed byte
+      PLX       ;Drop the addend arg from the stack, (S is +8)
+      PLX       ;leaving the incremented address (S is +7)
+      JSR SKPWH ;Skip to end of string
+      LDA (1,S) ;Check to make sure we hit end of string
+      BNE STEP2 ;If not, exit fail
+      LDA 3,S   ;Retrieve parsed byte from locals
+      STA [asm_base_lptr] ;Set value at global address pointer
+      PLA       ;Drop string pointer (S is +6)
+      PLA       ;(S is +5)
+      CLC
+      BRA STEND  ;Exit success
+STEP3 PLX        ;Dump unneeded stack values
+STEP2 PLX        
+      PLX
+STFAL SEC        ;Carry bit indicates command failure
+STEND PLX        ;Clear local variable area
+      PLY        ;Restore caller register values
       PLX
       PLA
       XBA
       PLA
-      RTS
+      RTS        ;Return to caller
+
+;Console command 'go' - GO to the current address and start executing
+;Format - 'go' no arguments
+GOCM
+    PHA       ;Backup A value
+    XBA
+    PHA
+    PHA       ;Put B/A string pointer onto the stack (addw arg 1) (S is +1)
+    XBA       
+    PHA       ;(S is +2)
+    LDX #$00  ;Push 0x0002 addend (addw arg 2)
+    PHX       ;(S is +3)
+    LDX #$02
+    PHX       ;(S is +4)
+    JSR ADDW  ;Call ADDW to fast-forward past the 'go' command chars
+    PLX       ;Drop the addend arg from the stack, (S is +3)
+    PLX       ;leaving the incremented address (S is +2)
+    JSR SKPWH ;Fast-forward past any whitespace characters
+    LDA (1,S) ;Check current character
+    BNE GOE   ;If it wasn't the end of the string, exit fail
+    JMP [asm_base_lptr]
+    BRA GOEND ;This will never actually return
+GOE 
+    SEC
+GOEND 
+    PLA       ;Dump unneeded stack values
+    PLA
+    RTS 
+
 
 ;Console command 'addr' - set the current storage ADDRess
 ;Format - 'addr AAAAAA' where 'A' is a hex digit in a 
@@ -386,39 +391,61 @@ ADDRCM
       PHA       ;(S is +2)
       PHX       ;(S is +3)
       PHY       ;(S is +4)
-      PHA       ;Put B/A string pointer onto the stack (addw arg 1) (S is +5)
-      XBA       
+      PHA       ;Create variable space on the stack (S is +5)
       PHA       ;(S is +6)
+      PHA       ;(S is +7)
+      PHA       ;Put B/A string pointer onto the stack (addw arg 1) (S is +8)
+      XBA       
+      PHA       ;(S is +9)
       LDX #$00  ;Push 0x0004 addend (addw arg 2)
-      PHX       ;(S is +7)
+      PHX       ;(S is +10)
       LDX #$04
-      PHX       ;(S is +8)
+      PHX       ;(S is +11)
       JSR ADDW  ;Call ADDW to fast-forward past the 'addr' command chars
-      PLX       ;Drop the addend arg from the stack, (S is +7)
-      PLX       ;leaving the incremented address (S is +6)
-      JSR SKPWH ;Fast-forward past any whitespace characters
-      PHX       ;Push room for parsed address retval (S is +7)
-      PHX       ;(S is +8)
-      PHX       ;(S is +9)
+      PLX       ;Drop the addend arg from the stack, (S is +10)
+      PLX       ;leaving the incremented address (S is +9)
+tsbk2 JSR SKPWH ;Fast-forward past any whitespace characters
+      PHX       ;Push room for parsed address retval (S is +10)
+      PHX       ;(S is +11)
+      PHX       ;(S is +12)
       JSR PRSAD ;Parse the address text at the pointer
       BCS ADEP5 ;If the conversion failed, exit fail
-      PLA       ;Otherwise, stash output value into local var area (S is +8)
-      STA asm_base_lptr+2
-      PLA       ;(S is +7)
-      STA asm_base_lptr+1
-      PLA       ;(S is +6)
+      PLA       ;Otherwise, stash parsed value into local variable area (S is +11)
+      STA 5,S   ;(11 - 5 = 6 = 2nd local byte + 4 regs)
+      PLA       ;(S is +10)
+      STA 5,S   ;(10 - 5 = 5 = 1st local byte + 4 regs)
+      PLA       ;(S is +9)
+      STA 5,S   ;(9 - 5 = 4 = 0th local byte + 4 regs) now the string pointer is on the stack again
+      LDX #$00  ;Push 0x0006 addend (addw arg 2)
+      PHX       ;(S is +10)
+      LDX #$06
+      PHX       ;(S is +11)
+      JSR ADDW  ;Call ADDW to fast-forward past the parsed digits
+      PLX       ;Drop the addend arg from the stack, (S is +10)
+      PLX       ;leaving the incremented address (S is +9)
+      JSR SKPWH ;Skip to what SHOULD be the end of the string
+tstbk LDA (1,S) ;Check next non-white byte
+      BNE ADEP2 ;If it wasn't zero, exit fail
+      LDA 3,S   ;Store parsed value to global pointer (9 - 3 = 6 = 2nd local byte + 4 regs)
       STA asm_base_lptr
-      PLA       ;Drop string pointer (S is +5)
-      PLA       ;(S is +4)
+      LDA 4,S   ;(9 - 2 = 5 = 1st local byte + 4 regs)
+      STA asm_base_lptr+1
+      LDA 5,S   ;(9 - 3 = 4 = 0th local byte + 4 regs)
+      STA asm_base_lptr+2
+      PLA       ;Drop string pointer (S is +8)
+      PLA       ;(S is +7)
       CLC
       BRA ADEND  ;Exit success
 ADEP5 PLX        ;Dump unneeded stack values
       PLX
       PLX
-      PLX
+ADEP2 PLX
       PLX
 ADFAL SEC        ;Carry bit indicates command failure
-ADEND PLY        ;Restore caller register values
+ADEND PLA        ;Dump local variable space
+      PLA 
+      PLA
+      PLY        ;Restore caller register values
       PLX
       PLA
       XBA
@@ -489,30 +516,6 @@ SWTOP LDA ($4,S) ;Check byte value at pointer (4 - 1 = 3)
       STA $5,S   ;(5 - 1 = 4)
       BRA SWTOP
 SWEXI PLA        ;Restore original A value
-      RTS
-
-LODCM PHA
-      PHX
-      LDA #LDMSG/256
-      XBA
-      LDA #LDMSG&255
-      JSR PRNTS
-      JSR @RDCHR
-      STA load_size
-      LDX #$FF
-GBYTE INX
-      JSR @RDCHR
-      STA $1000,X         ;TODO Upgrade past 256    
-      CPX load_size
-      BEQ LODDN
-      LDA #$2E
-      JSR @OUTCH
-      BRA GBYTE
-LODDN JSR PRTLN
-      JSR @$001000
-      CLC
-      PLX
-      PLA
       RTS
 
 STCMP PHY
