@@ -42,6 +42,9 @@
     <ClInclude Include="..\XR88C681.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="..\FrameBufferDevice.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\main.cpp">
@@ -68,8 +71,14 @@
     <ClCompile Include="..\XR88C681.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\FrameBufferDevice.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Library Include="..\lib816.lib" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="packages.config" />
   </ItemGroup>
 </Project>

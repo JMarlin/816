@@ -7,22 +7,34 @@ ROMDevice::ROMDevice(char* image_path, word32 base, word32 size) {
 	auto image_file = fopen(image_path, "rb");
 
 	if(!image_file)
-		return; //TODO: Report an actual error status
+		return;
 
 	this->_StorageArea = (byte*)malloc(size);
+
+	if (this->_StorageArea == NULL) {
+
+		fclose(image_file);
+		return;
+	}
+
 	fread_s(this->_StorageArea, size, 1, size, image_file);
 	fclose(image_file);
+
 	this->AddResponseRange(base, base + size - 1, RW_MASK_R);	
+	this->_InitOk = true;
 }
 
 ROMDevice::~ROMDevice() {
 
-	free(this->_StorageArea);
+	if(this->_StorageArea != NULL)
+		free(this->_StorageArea);
 }
 
 bool ROMDevice::_InternalReadByte(word32 address, word32 timestamp, word32 emulFlags, ResponseRange* range, byte &b) {
 
-	b = this->_StorageArea[address - range->Start()];
+	b = this->_StorageArea != NULL ?
+		this->_StorageArea[address - range->Start()] :
+		0xFF;
 
 	return true;
 }

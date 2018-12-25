@@ -2,6 +2,7 @@
 
 Device::Device() {
 
+	this->_InitOk = false;
 	this->_ResponseRanges = new std::list<ResponseRange*>();
 }
 
@@ -11,6 +12,10 @@ Device::~Device() {
 		delete *iter;
 
 	delete this->_ResponseRanges;
+}
+
+bool Device::GetInitOk() {
+	return this->_InitOk;
 }
 
 bool Device::TryReadByte(word32 address, word32 timestamp, word32 emulFlags, byte &b) {

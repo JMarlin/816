@@ -238,7 +238,7 @@ int debug_command_break(int argc, char* argv[]) {
                 break;
             default:
                 breakpoint_check(address, BP_MODE_REMOVE);
-                printf("Breakpoint at %06X removed\n");
+                printf("Breakpoint at %06X removed\n", address);
                 fflush(stdout);
                 break;
         }
@@ -291,50 +291,15 @@ int debug_command_key(int argc, char* argv[]) {
 
 int debug_command_send(int argc, char* argv[]) {
 
-	FILE* send_file;
-	int read_size;
-
 	if(argc != 2) {
 		
 		printf("Usage: send <file to send>\n");
 		return DBG_CMD_REMAIN;
 	}
 
-	send_file = fopen(argv[1], "rb");
-
-    if(!send_file) {
-
-        printf("Couldn't find file '%s'.\n", argv[1]);
-        return DBG_CMD_REMAIN;
-    }
-
-    fseek(send_file, 0, SEEK_END);
-    send_file_size = ftell(send_file);
-    rewind(send_file);
-    send_file_data = (unsigned char*)malloc(send_file_size);
-
-    if(!send_file_data) {
-
-        printf("Couldn't allocate memory for file.\n");
-        fclose(send_file);
-        return DBG_CMD_REMAIN;
-    }
-
-    if((read_size = fread(send_file_data, 1, send_file_size, send_file)) != send_file_size) {
-    
-        printf("Couldn't read file, %i != %i.\n", send_file_size, read_size);
-        fclose(send_file);
-        free(send_file_data);
-		send_file_data = 0;
-        return DBG_CMD_REMAIN;
-    }
-
-    fclose(send_file);
-	send_file_index = 0;
-	sending_file = 1;
-	uart_register = 0x01;
-
-	printf("File %s loaded and queued.\n", argv[1]);
+	send_file_data = (unsigned char*)malloc(send_file_size);
+	if (!system_controller->StartSendFile(argv[1]))
+		return DBG_CMD_REMAIN;
 
 	return DBG_CMD_REMAIN;
 }
@@ -669,8 +634,6 @@ void spi_print(void) {
 
 int main(int argc, char* argv[]) {
 
-    FILE* romfile;
-
     //Get args
     if(argc > 1) {
    
@@ -691,6 +654,12 @@ int main(int argc, char* argv[]) {
     CPU_setUpdatePeriod(1);
 
 	system_controller = new SystemControllerCPLD("boot.rom");
+
+	if (!system_controller->GetInitOk()) {
+
+		printf("Couldn't bring up the system. Exiting.\n");
+		return 0;
+	}
 
     printf("Starting execution\n");
     signal(SIGINT, int_handler);

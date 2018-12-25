@@ -2,6 +2,14 @@
 
 #include "device.h"
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <WS2tcpip.h>
+#pragma comment (lib, "Ws2_32.lib")
+#else
+#include <sys\socket.h>
+#endif
+
 //Register address values from datasheet
 #define XR_MRA     0x00 //RW
 #define XR_SRA     0x01 //R
@@ -181,7 +189,7 @@ public:
 	bool IntWrite_THRA(word32 address, word32 timestamp, ResponseRange* triggered_range, byte b);
 	bool IntWrite_THRB(word32 address, word32 timestamp, ResponseRange* triggered_range, byte b);
 
-
+	bool StartSendFile(char* filename);
 	bool Refresh(word32 timestamp);
 
 protected:
@@ -192,6 +200,11 @@ private:
 	void _RegisterRegister(word32 base, byte reg, byte rw_flag, ResponseRange::ReadCallback read_callback, ResponseRange::WriteCallback write_callback);
 
 	void _SetISRWithSideEffects(byte value);
+
+	bool _SendingFile;
+	unsigned char* _SendFileData;
+	int _SendFileSize;
+	int _SendFileIndex;
 
 	bool _TXEnabledA;
 	bool _RXEnabledA;
@@ -235,4 +248,17 @@ private:
 	byte _THRB;
 	byte _IVR;
 	byte _OPCR;
+
+	//Stuff for client TCP connection
+#ifdef _WIN32
+	SOCKET _ClientSocket;
+#else
+	int _ClientSocket;
+#endif
+
+	bool _GetTCPConsole();
+	void _CloseTCPConsole();
+	bool _TCPConsolePending();
+	byte _TCPConsoleGetch();
+	void _TCPConsolePutch(byte b);
 };

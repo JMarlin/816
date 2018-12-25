@@ -9,6 +9,7 @@ public:
 	DeviceAggregator();
 	~DeviceAggregator();
 
+	virtual bool GetInitOk();
 	bool Refresh(word32 timestamp);
 	bool TryReadByte(word32 address, word32 timestamp, word32 emulFlags, byte &b);
 	bool TryWriteByte(word32 address, word32 timestamp, byte b);

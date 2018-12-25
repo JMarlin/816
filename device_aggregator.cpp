@@ -13,6 +13,18 @@ DeviceAggregator::~DeviceAggregator() {
 	delete this->_AggregatedDevices;
 }
 
+bool DeviceAggregator::GetInitOk() {
+
+	if (!this->_InitOk)
+		return false;
+
+	for (auto iter = this->_AggregatedDevices->begin(); iter != this->_AggregatedDevices->end(); iter++)
+		if (!(*iter)->GetInitOk())
+			return false;
+
+	return true;
+}
+
 void DeviceAggregator::_InstallDevice(Device* device) {
 	
 	this->_AggregatedDevices->push_back(device);

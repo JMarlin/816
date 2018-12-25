@@ -1,10 +1,13 @@
 #include "XR88C681.h"
-#include <conio.h>
 
 XR88C681::XR88C681(word32 base_addr) {
 	
 	base_addr &= 0x00FFFFFC;
 
+	//File transfer state variable init
+	this->_SendingFile = false;
+
+	//Init register statuses
 	this->_TXEnabledA = false;
 	this->_RXEnabledA = false;
 	this->_TXEnabledB = false;
@@ -24,6 +27,7 @@ XR88C681::XR88C681(word32 base_addr) {
 	this->_RHRAOutPtr = 0;
 	this->_RHRBOutPtr = 0;
 
+	//Attach register r/w handlers
 	this->_RegisterRegister(base_addr, XR_MRA,     RW_MASK_R | RW_MASK_W,  XR88C681::Read_MRA,  XR88C681::Write_MRA);
 	this->_RegisterRegister(base_addr, XR_SRA,     RW_MASK_R,              XR88C681::Read_SRA,  NULL);
 	this->_RegisterRegister(base_addr, XR_CSRA,    RW_MASK_W,              NULL,                XR88C681::Write_CSRA);
@@ -50,10 +54,199 @@ XR88C681::XR88C681(word32 base_addr) {
 	this->_RegisterRegister(base_addr, XATC_SOPBC, RW_MASK_W,              NULL,                XR88C681::Write_SOPBC);
 	this->_RegisterRegister(base_addr, XATC_STC,   RW_MASK_R,              XR88C681::Read_STC,  NULL);
 	this->_RegisterRegister(base_addr, XATC_COPBC, RW_MASK_W,              NULL,                XR88C681::Write_COPBC);
+
+	//Set up and wait for connection to console on TCP
+	printf("Waiting on console to attach to TCP 50615...");
+	
+	if (this->_GetTCPConsole()) {
+
+		//Hack to turn off local echo on the client
+		this->_TCPConsolePutch(0xFF); //IAC
+		this->_TCPConsolePutch(0xFB); //WILL
+		this->_TCPConsolePutch(0x01); //ECHO
+
+		this->_InitOk = true;
+		printf("done\n");
+	} else {
+
+		printf("unable to establish connection.\n");
+	}
 }
 
+#ifdef _WIN32
+
+bool XR88C681::_GetTCPConsole() {
+
+	WSADATA wsa_data;
+	struct addrinfo * addr_info = NULL;
+	struct addrinfo hints;
+
+	SOCKET listen_socket = INVALID_SOCKET;
+	this->_ClientSocket = INVALID_SOCKET;
+
+	if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
+		return false;
+
+	ZeroMemory(&hints, sizeof(hints));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_protocol = IPPROTO_TCP;
+	hints.ai_flags = AI_PASSIVE;
+
+	if (getaddrinfo(NULL, "50615", &hints, &addr_info) != 0) {
+
+		WSACleanup();
+		return false;
+	}
+
+	if (
+		(listen_socket = socket(
+			addr_info->ai_family,
+			addr_info->ai_socktype,
+			addr_info->ai_protocol)
+		) == INVALID_SOCKET
+	) {
+		
+		freeaddrinfo(addr_info);
+		WSACleanup();
+		return false;
+	}
+
+	if (bind(
+			listen_socket, 
+			addr_info->ai_addr, 
+			(int)addr_info->ai_addrlen
+	) == SOCKET_ERROR) {
+		
+		freeaddrinfo(addr_info);
+		closesocket(listen_socket);
+		WSACleanup();
+		return false;
+	}
+
+	freeaddrinfo(addr_info);
+
+	if (listen(listen_socket, SOMAXCONN) == SOCKET_ERROR) {
+	
+		closesocket(listen_socket);
+		WSACleanup();
+		return false;
+	}
+
+	if ((this->_ClientSocket = accept(listen_socket, NULL, NULL))
+		== INVALID_SOCKET) {
+
+		closesocket(listen_socket);
+		WSACleanup();
+		return false;
+	}
+
+	closesocket(listen_socket);
+
+	return true;
+}
+
+void XR88C681::_CloseTCPConsole() {
+
+	if (this->_ClientSocket == INVALID_SOCKET)
+		return;
+
+	closesocket(this->_ClientSocket);
+	WSACleanup();
+}
+
+bool XR88C681::_TCPConsolePending() {
+	
+	u_long bytes_available = 0;
+
+	ioctlsocket(this->_ClientSocket, FIONREAD, &bytes_available);
+
+	return bytes_available > 0;
+}
+
+byte XR88C681::_TCPConsoleGetch() {
+	
+	char buf;
+
+	recv(this->_ClientSocket, &buf, 1, 0);
+
+	return buf;
+}
+
+void XR88C681::_TCPConsolePutch(byte b) {
+
+	const char val = b;
+
+	send(this->_ClientSocket, &val, 1, 0);
+}
+
+#else
+
+bool XR88C681::_GetTCPConsole() {
+
+	return false;
+}
+
+void XR88C681::_CloseTCPConsole() {
+}
+
+bool XR88C681::_TCPConsolePending() {
+	return false;
+}
+
+byte XR88C681::_TCPConsoleGetch() {
+	return 0;
+}
+
+void XR88C681::_TCPConsolePutch(byte b) {}
+
+#endif 
+
 XR88C681::~XR88C681() {
-	//TODO: Reset console mode
+	this->_CloseTCPConsole();
+}
+
+bool XR88C681::StartSendFile(char* filename) {
+
+	FILE* send_file = fopen(filename, "rb");
+
+	if (!send_file) {
+
+		printf("Couldn't find file '%s'.\n", filename);
+		return false;
+	}
+
+	fseek(send_file, 0, SEEK_END);
+	this->_SendFileSize = ftell(send_file);
+	rewind(send_file);
+
+	this->_SendFileData = (unsigned char*)malloc(this->_SendFileSize);
+
+	if (!this->_SendFileData) {
+
+		printf("Couldn't allocate memory for file.\n");
+		fclose(send_file);
+		return false;
+	}
+
+	int read_size;
+
+	if ((read_size = fread(this->_SendFileData, 1, this->_SendFileSize, send_file)) != this->_SendFileSize) {
+
+		printf("Couldn't read file, %i != %i.\n", this->_SendFileSize, read_size);
+		fclose(send_file);
+		free(this->_SendFileData);
+		this->_SendFileData = 0;
+		return false;
+	}
+
+	fclose(send_file);
+	this->_SendFileIndex = 0;
+	this->_SendingFile = true;
+
+	printf("File %s loaded and queued.\n", filename);
+
+	return true;
 }
 
 //This should be used in any case that we want to set an ISR bit internally as it will
@@ -86,13 +279,26 @@ bool XR88C681::Refresh(word32 timestamp) {
 
 	//We emulate an incoming console character as a new character having come down 
 	//RX on channel A
-	if(_kbhit()) {
 
-		auto received = _getch();
+	bool kb_was_hit = false;
+
+	if(
+		(this->_SendingFile && ((this->_SRA & SR_FFULL_BIT) == 0)) || 
+	    (kb_was_hit = this->_TCPConsolePending())
+	) {
+
+		auto keyval = kb_was_hit ? this->_TCPConsoleGetch() : 0;
 
 		//Trip the debugger on '`'
-		if(received == '`')
+		if (keyval == '`')
 			return true;
+
+		auto received = 
+			this->_SendingFile ? 
+				this->_SendFileIndex == this->_SendFileSize ?
+					this->_SendFileIndex++, 0 :
+					this->_SendFileData[this->_SendFileIndex++] :
+				keyval;
 
 		//If the FIFO is already full, we need to dump the incoming char and
 		//flag an overrun condition
@@ -133,6 +339,12 @@ bool XR88C681::Refresh(word32 timestamp) {
 			if((this->_MRA1 & MR1_RX_INT_SELECT_BIT) == RX_INT_SEL_RXRDY)
 				this->_SetISRWithSideEffects(this->_ISR | ISR_RXRDY_FFULL_A_BIT);
 		}
+
+		if(this->_SendingFile && (this->_SendFileIndex > this->_SendFileSize)) {
+			
+			this->_SendingFile = false;
+			free(this->_SendFileData);
+		}
 	}
 
 	//When we're ready to send a character out TX A (which we are not currently
@@ -154,7 +366,7 @@ bool XR88C681::Refresh(word32 timestamp) {
 			this->_THRA = rand() & 0xFF; //Send a bad byte if the above conditions aren't met
 
 		//Print the character transmitted by the DUART
-		printf("%c", this->_THRA);
+		this->_TCPConsolePutch(this->_THRA);
 		fflush(stdout);
 
 		//Update the status register (THRB is empty and ready to transmit)
