@@ -164,6 +164,52 @@ bool XR88C681::_TCPConsolePending() {
 	return bytes_available > 0;
 }
 
+#else
+
+bool XR88C681::_GetTCPConsole() {
+
+	int listen_fd = 0;
+
+	struct sockaddr_in server_address;
+
+	listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+	memset(&server_address, '0', sizeof(server_address));
+	
+	server_address.sin_family = AF_INET;
+	server_address.sin_addr.s_addr = htonl(INADDR_ANY);
+	server_address.sin_port = htons(50615);
+
+	bind(listen_fd, (struct sockaddr*)&server_address, sizeof(server_address));
+
+	listen(listen_fd, 10);
+
+	this->_ClientSocket = accept(listen_fd, (struct sockaddr*)0, 0);
+	
+	close(listen_fd);
+
+	return true;
+}
+
+void XR88C681::_CloseTCPConsole() {
+
+	if (this->_ClientSocket == 0)
+		return;
+
+	close(this->_ClientSocket);
+}
+
+bool XR88C681::_TCPConsolePending() {
+	
+	int count;
+
+	ioctl(this->_ClientSocket, FIONREAD, &count);
+
+	return count > 0;
+}
+
+#endif 
+
+
 byte XR88C681::_TCPConsoleGetch() {
 	
 	char buf;
@@ -179,28 +225,6 @@ void XR88C681::_TCPConsolePutch(byte b) {
 
 	send(this->_ClientSocket, &val, 1, 0);
 }
-
-#else
-
-bool XR88C681::_GetTCPConsole() {
-
-	return false;
-}
-
-void XR88C681::_CloseTCPConsole() {
-}
-
-bool XR88C681::_TCPConsolePending() {
-	return false;
-}
-
-byte XR88C681::_TCPConsoleGetch() {
-	return 0;
-}
-
-void XR88C681::_TCPConsolePutch(byte b) {}
-
-#endif 
 
 XR88C681::~XR88C681() {
 	this->_CloseTCPConsole();

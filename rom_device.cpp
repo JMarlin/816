@@ -17,7 +17,12 @@ ROMDevice::ROMDevice(char* image_path, word32 base, word32 size) {
 		return;
 	}
 
+#ifdef _WIN32
 	fread_s(this->_StorageArea, size, 1, size, image_file);
+#else
+	fread(this->_StorageArea, 1, size, image_file);
+#endif
+
 	fclose(image_file);
 
 	this->AddResponseRange(base, base + size - 1, RW_MASK_R);	

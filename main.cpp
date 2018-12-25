@@ -9,7 +9,6 @@ extern "C" {
 #include <string.h>
 #include <string.h>
 #include <signal.h>
-#include <conio.h>
 #include "system_controller_cpld.h"
 
 #define RAM_SIZE  16*1024
@@ -561,27 +560,6 @@ void MEM_writeMem(word32 address, byte b, word32 timestamp) {
 
 	system_controller->TryWriteByte(address, timestamp, b);
 }
-
-#ifndef _WIN32 
-
-int kbhit() {
-    struct timeval tv = { 0L, 0L };
-    fd_set fds;
-    FD_ZERO(&fds);
-    FD_SET(0, &fds);
-    return select(1, &fds, NULL, NULL, &tv);
-}
-
-int getch() {
-    int r;
-    unsigned char c;
-    if((r = read(0, &c, sizeof(c))) < 0)
-        return r;
-    else
-        return c;
-}
-
-#endif
 
 //TODO
 int input(char* inbuf, int bufsz) {

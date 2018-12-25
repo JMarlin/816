@@ -1,13 +1,22 @@
 #pragma once
 
 #include "device.h"
+#include "stdlib.h"
+#include "stdio.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <WS2tcpip.h>
 #pragma comment (lib, "Ws2_32.lib")
 #else
-#include <sys\socket.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <memory.h>
 #endif
 
 //Register address values from datasheet

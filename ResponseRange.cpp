@@ -1,7 +1,6 @@
-#include <Windows.h>
 #include "ResponseRange.h"
 
-ResponseRange::ResponseRange(word32 start, word32 end, byte rw_mask) : ResponseRange::ResponseRange(start, end, rw_mask, NULL, NULL) {}
+ResponseRange::ResponseRange(word32 start, word32 end, byte rw_mask) : ResponseRange::ResponseRange(start, end, rw_mask, 0, 0) {}
 
 ResponseRange::ResponseRange(word32 start, word32 end, byte rw_mask, ResponseRange::ReadCallback read_callback, ResponseRange::WriteCallback write_callback) {
 	
